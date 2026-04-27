@@ -14,6 +14,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/arbitrum/filter"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/node"
 
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
@@ -73,7 +74,7 @@ func TestReportFilteredTransactions(t *testing.T) {
 	reports := []addressfilter.FilteredTxReport{{
 		ID:     "test-id",
 		TxHash: common.HexToHash("0x1234"),
-		TxRLP:  nil,
+		TxRLP:  hexutil.Bytes{},
 		FilteredAddresses: []filter.FilteredAddressRecord{{
 			Address:      common.HexToAddress("0xdead"),
 			FilterReason: filter.FilterReason{Reason: filter.ReasonFrom, EventRuleMatch: nil},
