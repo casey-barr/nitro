@@ -1354,26 +1354,33 @@ func testMemoryGrowMachineLimit(t *testing.T, jit bool) {
 		desc          string
 	}
 
-	// Stylus v2 (ArbOS < 59): pay_for_memory_grow takes u16, so grow(1<<16)
-	// silently charges 0 pages.  The only guard is the machine hard ceiling
-	// (MAX_WASM_PAGES = 65534) enforced by the HeapBound middleware.
+	// PageLimit=10 is set for both versions.  In v2 (ArbOS < 59) the consensus
+	// cap is not yet active, so 9, 10, and 11 pages all succeed.  The only v2
+	// guard is the machine hard ceiling (MAX_WASM_PAGES=65534) via HeapBound.
 	// Without the fix, wasmer's check "new_pages > 65536" evaluated to
-	// "65536 > 65536 = false" and allowed the grow; the prover rejected it.
+	// "65536 > 65536 = false" and allowed grow(1<<16); the prover rejected it.
 	v2Cases := []growCase{
-		{pages: 1, shouldSucceed: true,
-			desc: "small grow under machine ceiling succeeds"},
+		{pages: 9, shouldSucceed: true,
+			desc: "PageLimit(10) set but not enforced in v2"},
+		{pages: 10, shouldSucceed: true,
+			desc: "PageLimit(10) set but not enforced in v2"},
+		{pages: 11, shouldSucceed: true,
+			desc: "PageLimit(10) set but not enforced in v2"},
 		{pages: 1 << 16, shouldSucceed: false,
 			desc: "pay_for_memory_grow(65536) truncates to u16=0 (no charge); machine ceiling (65534) enforced by HeapBound"},
 	}
 
-	// Stylus v3 (ArbOS >= 59): pay_for_memory_grow takes u32, so grow(1<<16)
-	// triggers the consensus page-limit check (StylusParams.PageLimit = 128)
-	// and OOGs before memory.grow is reached; both machines agree.
+	// In v3 (ArbOS >= 59) the same PageLimit=10 becomes a consensus rule.
+	// The program starts with 1 initial page open; OOG when (1 + N) > 10.
 	v3Cases := []growCase{
-		{pages: 1, shouldSucceed: true,
-			desc: "small grow still succeeds in v3"},
+		{pages: 9, shouldSucceed: true,
+			desc: "(1 initial + 9 grown = 10 open) ≤ PageLimit(10)"},
+		{pages: 10, shouldSucceed: false,
+			desc: "(1 initial + 10 grown = 11 open) > PageLimit(10), OOG"},
+		{pages: 11, shouldSucceed: false,
+			desc: "(1 initial + 11 grown = 12 open) > PageLimit(10), OOG"},
 		{pages: 1 << 16, shouldSucceed: false,
-			desc: "pay_for_memory_grow(65536) passes full u32; consensus page limit (128) OOGs both machines"},
+			desc: "pay_for_memory_grow passes full u32; 65536 >> PageLimit(10), OOG"},
 	}
 
 	addr := deployWasm(t, ctx, auth, l2client, watFile("memory-grow"))
@@ -1399,10 +1406,15 @@ func testMemoryGrowMachineLimit(t *testing.T, jit bool) {
 		}
 	}
 
-	runCases(&addr, v2Cases)
-
 	arbOwner, err := precompilesgen.NewArbOwner(types.ArbOwnerAddress, l2client)
 	Require(t, err)
+	limitTx, err := arbOwner.SetWasmPageLimit(&auth, 10)
+	Require(t, err)
+	_, err = EnsureTxSucceeded(ctx, l2client, limitTx)
+	Require(t, err)
+
+	runCases(&addr, v2Cases)
+
 	upgradeTx, err := arbOwner.ScheduleArbOSUpgrade(&auth, params.ArbosVersion_59, 0)
 	Require(t, err)
 	_, err = builder.L2.EnsureTxSucceeded(upgradeTx)
