@@ -11,6 +11,19 @@ import (
 	"fmt"
 )
 
+const (
+	pemBlockTypePrivateKey  = "PRIVATE KEY"
+	pemBlockTypeCertificate = "CERTIFICATE"
+)
+
+var (
+	errDuplicatePrivateKey = errors.New("PEM contains more than one PRIVATE KEY block")
+	errMissingPrivateKey   = errors.New("no PRIVATE KEY block found in PEM")
+	errMissingCertificate  = errors.New("no CERTIFICATE block found in PEM")
+	errLeafIsCA            = errors.New("first certificate in PEM is a CA, expected leaf")
+	errKeyCertMismatch     = errors.New("private key does not match leaf certificate public key")
+)
+
 func parseCombinedPEM(data []byte) (*credentials, error) {
 	var privateKey ed25519.PrivateKey
 	var leaf *x509.Certificate
@@ -23,9 +36,9 @@ func parseCombinedPEM(data []byte) (*credentials, error) {
 			break
 		}
 		switch block.Type {
-		case "PRIVATE KEY":
+		case pemBlockTypePrivateKey:
 			if privateKey != nil {
-				continue
+				return nil, errDuplicatePrivateKey
 			}
 			key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 			if err != nil {
@@ -36,7 +49,10 @@ func parseCombinedPEM(data []byte) (*credentials, error) {
 				return nil, fmt.Errorf("private key is not Ed25519 (got %T)", key)
 			}
 			privateKey = ed
-		case "CERTIFICATE":
+		case pemBlockTypeCertificate:
+			// First CERTIFICATE block is the leaf. Subsequent blocks (e.g. CA chain
+			// from cert-manager's CombinedPEM output) are intentionally ignored:
+			// the spec sends only the leaf in X-Signature-Cert, no intermediates.
 			if leaf != nil {
 				continue
 			}
@@ -45,29 +61,36 @@ func parseCombinedPEM(data []byte) (*credentials, error) {
 				return nil, fmt.Errorf("parse certificate: %w", err)
 			}
 			leaf = cert
+		default:
+			return nil, fmt.Errorf("unsupported PEM block type %q (expected PRIVATE KEY in PKCS#8 form and CERTIFICATE)", block.Type)
 		}
 	}
 
 	if privateKey == nil {
-		return nil, errors.New("no PRIVATE KEY block found in PEM")
+		return nil, errMissingPrivateKey
 	}
 	if leaf == nil {
-		return nil, errors.New("no CERTIFICATE block found in PEM")
+		return nil, errMissingCertificate
 	}
 	if leaf.IsCA {
-		return nil, errors.New("first certificate in PEM is a CA, expected leaf")
+		return nil, errLeafIsCA
 	}
 
 	leafPub, ok := leaf.PublicKey.(ed25519.PublicKey)
 	if !ok {
 		return nil, fmt.Errorf("leaf certificate public key is not Ed25519 (got %T)", leaf.PublicKey)
 	}
-	if !privateKey.Public().(ed25519.PublicKey).Equal(leafPub) {
-		return nil, errors.New("private key does not match leaf certificate public key")
+	derivedPub, ok := privateKey.Public().(ed25519.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("private key Public() did not return ed25519.PublicKey (got %T)", privateKey.Public())
+	}
+	if !derivedPub.Equal(leafPub) {
+		return nil, errKeyCertMismatch
 	}
 
 	return &credentials{
 		privateKey: privateKey,
+		leafCert:   leaf,
 		leafDER:    leaf.Raw,
 	}, nil
 }

@@ -55,6 +55,9 @@ func NewVerifier(c *VerifierConfig) (*Verifier, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse expected SAN URI: %w", err)
 	}
+	if !expectedURI.IsAbs() {
+		return nil, fmt.Errorf("expected SAN must be an absolute URI, got %q", c.ExpectedSAN)
+	}
 	skew := c.TimestampSkew
 	if skew == 0 {
 		skew = DefaultTimestampSkew
@@ -96,6 +99,8 @@ func (v *Verifier) VerifyHTTPRequest(req *http.Request, rawBody []byte) error {
 	}
 
 	now := v.now()
+	// ExtKeyUsageAny: cert-manager-issued leaves don't set ExtKeyUsage; the spec
+	// only requires the KeyUsageDigitalSignature bit (checked separately below).
 	if _, err := leaf.Verify(x509.VerifyOptions{
 		Roots:       v.rootPool,
 		CurrentTime: now,

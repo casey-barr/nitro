@@ -62,7 +62,7 @@ type LeafOptions struct {
 func DefaultLeafOptions(sanURI string) LeafOptions {
 	return LeafOptions{
 		SANURI:    sanURI,
-		NotBefore: time.Now().Add(-time.Minute),
+		NotBefore: time.Now().Add(-time.Hour),
 		NotAfter:  time.Now().Add(time.Hour),
 		KeyUsage:  x509.KeyUsageDigitalSignature,
 	}

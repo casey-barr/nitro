@@ -6,6 +6,7 @@ package signer
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -52,6 +53,7 @@ func (c *Config) Validate() error {
 
 type credentials struct {
 	privateKey ed25519.PrivateKey
+	leafCert   *x509.Certificate
 	leafDER    []byte
 }
 
@@ -79,7 +81,7 @@ func (s *Signer) Start(ctx context.Context) {
 	s.StopWaiter.Start(ctx, s)
 	s.CallIteratively(func(_ context.Context) time.Duration {
 		if err := s.reloadConfig(); err != nil {
-			log.Warn("Failed to reload signing PEM, retaining previous credentials", "err", err, "file", s.pemFile)
+			log.Error("Failed to reload signing PEM, retaining previous credentials", "err", err, "file", s.pemFile)
 		} else {
 			log.Info("Reloaded signing PEM", "file", s.pemFile)
 		}
@@ -103,7 +105,13 @@ func (s *Signer) reloadConfig() error {
 func (s *Signer) SignHTTPRequest(req *http.Request, body []byte, now time.Time) error {
 	creds := s.creds.Load()
 	if creds == nil {
-		return errors.New("signer has no credentials loaded")
+		return errors.New("no signing credentials loaded")
+	}
+	if now.Before(creds.leafCert.NotBefore) {
+		return fmt.Errorf("leaf certificate not yet valid (NotBefore=%s, now=%s)", creds.leafCert.NotBefore, now)
+	}
+	if now.After(creds.leafCert.NotAfter) {
+		return fmt.Errorf("leaf certificate expired (NotAfter=%s, now=%s)", creds.leafCert.NotAfter, now)
 	}
 	timestamp := strconv.FormatInt(now.Unix(), 10)
 	payload := buildSigningPayload(timestamp, body)

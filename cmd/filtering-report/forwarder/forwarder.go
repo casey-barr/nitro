@@ -93,17 +93,10 @@ func New(config *Config, queueClient sqsclient.QueueClient) (*Forwarder, error) 
 func (r *Forwarder) Start(ctx context.Context) {
 	r.StopWaiter.Start(ctx, r)
 	if r.signer != nil {
-		r.signer.Start(ctx)
+		r.StartAndTrackChild(r.signer)
 	}
 	for i := uint(0); i < r.config.Workers; i++ {
 		r.CallIteratively(r.pollAndForward)
-	}
-}
-
-func (r *Forwarder) StopAndWait() {
-	r.StopWaiter.StopAndWait()
-	if r.signer != nil {
-		r.signer.StopAndWait()
 	}
 }
 
@@ -117,27 +110,44 @@ func (r *Forwarder) pollAndForward(ctx context.Context) time.Duration {
 		return r.config.PollInterval
 	}
 	msg := msgs[0]
-	if err := r.forwardToEndpoint(ctx, []byte(*msg.Body)); err != nil {
+	body := []byte(*msg.Body)
+
+	req, err := r.buildSignedRequest(ctx, body)
+	if err != nil {
+		// Build/sign failures are sticky (broken or missing credentials, malformed
+		// endpoint URL) until the next signer reload or config change, so back off
+		// rather than burning CPU on the same SQS message.
+		log.Error("Failed to build signed request", "err", err, "messageId", *msg.MessageId)
+		return r.config.PollInterval
+	}
+
+	if err := r.sendRequest(req); err != nil {
+		// Network and HTTP errors may be transient; retry immediately.
 		log.Error("Failed to forward report to external endpoint", "err", err, "messageId", *msg.MessageId)
 		return 0
 	}
-	if err = r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
+
+	if err := r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
 		log.Error("Failed to delete SQS message after forwarding", "err", err, "messageId", *msg.MessageId)
 	}
 	return 0
 }
 
-func (r *Forwarder) forwardToEndpoint(ctx context.Context, body []byte) error {
+func (r *Forwarder) buildSignedRequest(ctx context.Context, body []byte) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.config.ExternalEndpoint.URL, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if r.signer != nil {
 		if err := r.signer.SignHTTPRequest(req, body, time.Now()); err != nil {
-			return fmt.Errorf("sign request: %w", err)
+			return nil, fmt.Errorf("sign request: %w", err)
 		}
 	}
+	return req, nil
+}
+
+func (r *Forwarder) sendRequest(req *http.Request) error {
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		return err
