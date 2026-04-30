@@ -23,8 +23,6 @@ import (
 	"github.com/offchainlabs/nitro/util/stopwaiter"
 )
 
-const reloadInterval = time.Hour
-
 const (
 	HeaderSignature          = "X-Signature"
 	HeaderSignatureCert      = "X-Signature-Cert"
@@ -32,22 +30,24 @@ const (
 )
 
 type Config struct {
-	PEMFile string `koanf:"pem-file"`
+	PEMFile        string        `koanf:"pem-file"`
+	ReloadInterval time.Duration `koanf:"reload-interval"`
 }
 
 var DefaultConfig = Config{
-	PEMFile: "",
+	PEMFile:        "",
+	ReloadInterval: time.Hour,
 }
 
 func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
-	f.String(prefix+".pem-file", DefaultConfig.PEMFile, "path to combined PEM file containing Ed25519 private key and leaf certificate; empty disables signing")
-}
-
-func (c *Config) Enabled() bool {
-	return c.PEMFile != ""
+	f.String(prefix+".pem-file", DefaultConfig.PEMFile, "path to combined PEM file containing Ed25519 private key and leaf certificate")
+	f.Duration(prefix+".reload-interval", DefaultConfig.ReloadInterval, "interval between PEM file reloads")
 }
 
 func (c *Config) Validate() error {
+	if c.PEMFile == "" {
+		return errors.New("pem-file is required")
+	}
 	return nil
 }
 
@@ -58,19 +58,24 @@ type credentials struct {
 
 type Signer struct {
 	stopwaiter.StopWaiter
-	pemFile string
-	creds   atomic.Pointer[credentials]
+	pemFile        string
+	reloadInterval time.Duration
+	creds          atomic.Pointer[credentials]
 }
 
 func NewSigner(config *Config) (*Signer, error) {
 	if config == nil {
 		return nil, errors.New("config must not be nil")
 	}
-	if !config.Enabled() {
-		return nil, errors.New("signer is disabled (empty pem-file)")
+	if config.PEMFile == "" {
+		return nil, errors.New("pem-file is required")
 	}
-	s := &Signer{pemFile: config.PEMFile}
-	if err := s.reloadConfig(); err != nil {
+	ri := config.ReloadInterval
+	if ri <= 0 {
+		ri = DefaultConfig.ReloadInterval
+	}
+	s := &Signer{pemFile: config.PEMFile, reloadInterval: ri}
+	if err := s.loadConfig(); err != nil {
 		return nil, fmt.Errorf("initial PEM load: %w", err)
 	}
 	return s, nil
@@ -79,21 +84,21 @@ func NewSigner(config *Config) (*Signer, error) {
 func (s *Signer) Start(ctx context.Context) {
 	s.StopWaiter.Start(ctx, s)
 	s.CallIteratively(func(_ context.Context) time.Duration {
-		if err := s.reloadConfig(); err != nil {
+		if err := s.loadConfig(); err != nil {
 			log.Error("Failed to reload signing PEM, retaining previous credentials", "err", err, "file", s.pemFile)
 		} else {
 			log.Info("Reloaded signing PEM", "file", s.pemFile)
 		}
-		return reloadInterval
+		return s.reloadInterval
 	})
 }
 
-func (s *Signer) reloadConfig() error {
+func (s *Signer) loadConfig() error {
 	data, err := os.ReadFile(s.pemFile)
 	if err != nil {
 		return fmt.Errorf("read PEM file %q: %w", s.pemFile, err)
 	}
-	creds, err := parseCombinedPEM(data)
+	creds, err := ParseCombinedPEM(data)
 	if err != nil {
 		return err
 	}
@@ -113,7 +118,7 @@ func (s *Signer) SignHTTPRequest(req *http.Request, body []byte, now time.Time) 
 		return fmt.Errorf("leaf certificate expired (NotAfter=%s, now=%s)", creds.leafCert.NotAfter, now)
 	}
 	timestamp := strconv.FormatInt(now.Unix(), 10)
-	payload := buildSigningPayload(timestamp, body)
+	payload := BuildSigningPayload(timestamp, body)
 	signature := ed25519.Sign(creds.privateKey, payload)
 
 	req.Header.Set(HeaderSignature, base64.StdEncoding.EncodeToString(signature))
@@ -122,7 +127,7 @@ func (s *Signer) SignHTTPRequest(req *http.Request, body []byte, now time.Time) 
 	return nil
 }
 
-func buildSigningPayload(timestamp string, body []byte) []byte {
+func BuildSigningPayload(timestamp string, body []byte) []byte {
 	payload := make([]byte, 0, len(timestamp)+1+len(body))
 	payload = append(payload, timestamp...)
 	payload = append(payload, '.')

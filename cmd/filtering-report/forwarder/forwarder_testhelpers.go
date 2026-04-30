@@ -13,10 +13,13 @@ import (
 	"time"
 
 	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
+	"github.com/offchainlabs/nitro/cmd/filtering-report/signer/signertest"
 	"github.com/offchainlabs/nitro/cmd/genericconf"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/util/sqsclient"
 )
+
+const TestSignerSAN = "https://test-webhook-signer.internal"
 
 type MockExternalEndpoint struct {
 	server       *httptest.Server
@@ -24,17 +27,7 @@ type MockExternalEndpoint struct {
 	requestCount atomic.Int64
 }
 
-func NewMockExternalEndpoint(t *testing.T) *MockExternalEndpoint {
-	t.Helper()
-	return newMockExternalEndpoint(t, nil)
-}
-
-func NewMockExternalEndpointWithVerifier(t *testing.T, v *signer.Verifier) *MockExternalEndpoint {
-	t.Helper()
-	return newMockExternalEndpoint(t, v)
-}
-
-func newMockExternalEndpoint(t *testing.T, v *signer.Verifier) *MockExternalEndpoint {
+func NewMockExternalEndpoint(t *testing.T, v *signertest.Verifier) *MockExternalEndpoint {
 	t.Helper()
 	m := &MockExternalEndpoint{
 		reports: make(chan *addressfilter.FilteredTxReport, 100),
@@ -46,12 +39,10 @@ func newMockExternalEndpoint(t *testing.T, v *signer.Verifier) *MockExternalEndp
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		if v != nil {
-			if err := v.VerifyHTTPRequest(r, body); err != nil {
-				t.Errorf("verifier rejected signed request: %v", err)
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
+		if err := v.VerifyHTTPRequest(r, body); err != nil {
+			t.Errorf("verifier rejected signed request: %v", err)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
 		}
 		var report addressfilter.FilteredTxReport
 		if err := json.Unmarshal(body, &report); err != nil {
@@ -84,17 +75,7 @@ func (m *MockExternalEndpoint) ReceivedCount() int {
 	return int(m.requestCount.Load())
 }
 
-func NewTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, endpointURL string) *Forwarder {
-	t.Helper()
-	return newTestForwarder(t, queueClient, endpointURL, signer.Config{})
-}
-
-func NewTestForwarderWithSigner(t *testing.T, queueClient sqsclient.QueueClient, endpointURL string, signerCfg signer.Config) *Forwarder {
-	t.Helper()
-	return newTestForwarder(t, queueClient, endpointURL, signerCfg)
-}
-
-func newTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, endpointURL string, signerCfg signer.Config) *Forwarder {
+func NewTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, endpointURL string, signerCfg signer.Config) *Forwarder {
 	t.Helper()
 	config := &Config{
 		Workers:            1,
@@ -111,4 +92,18 @@ func newTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, endpointU
 		t.Fatal(err)
 	}
 	return fwd
+}
+
+func NewSignedFixture(t *testing.T) (pemPath string, endpoint *MockExternalEndpoint) {
+	t.Helper()
+	pemPath, caPath := signertest.SigningFixture(t, signertest.DefaultLeafOptions(TestSignerSAN))
+	verifier, err := signertest.NewVerifier(&signertest.VerifierConfig{
+		CARootPEMFile: caPath,
+		ExpectedSAN:   TestSignerSAN,
+		TimestampSkew: signertest.DefaultTimestampSkew,
+	})
+	if err != nil {
+		t.Fatalf("NewVerifier: %v", err)
+	}
+	return pemPath, NewMockExternalEndpoint(t, verifier)
 }

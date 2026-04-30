@@ -5,47 +5,57 @@ package signer
 
 import (
 	"bytes"
-	"net/http"
-	"net/http/httptest"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/offchainlabs/nitro/cmd/filtering-report/signer/signertest"
 )
 
-const testSAN = "https://test-webhook-signer.internal"
-
-func TestSigner_RoundTripVerifiedByVerifier(t *testing.T) {
-	pemPath, caPath := signertest.SigningFixture(t, signertest.DefaultLeafOptions(testSAN))
-
-	s, err := NewSigner(&Config{PEMFile: pemPath})
+func issueSelfSignedLeaf(t *testing.T) (priv ed25519.PrivateKey, leafDER []byte) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		t.Fatalf("NewSigner: %v", err)
+		t.Fatalf("generate key: %v", err)
 	}
-	v, err := NewVerifier(&VerifierConfig{
-		CARootPEMFile: caPath,
-		ExpectedSAN:   testSAN,
-	})
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-leaf"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	leafDER, err = x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, priv)
 	if err != nil {
-		t.Fatalf("NewVerifier: %v", err)
+		t.Fatalf("create cert: %v", err)
 	}
+	return priv, leafDER
+}
 
-	body := []byte(`{"event":"transfer","amount":"1.5"}`)
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	if err := s.SignHTTPRequest(req, body, time.Now()); err != nil {
-		t.Fatalf("SignHTTPRequest: %v", err)
+func writeCombinedPEM(t *testing.T, dir string, priv ed25519.PrivateKey, leafDER []byte) string {
+	t.Helper()
+	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatalf("marshal PKCS8: %v", err)
 	}
-	if err := v.VerifyHTTPRequest(req, body); err != nil {
-		t.Fatalf("VerifyHTTPRequest: %v", err)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+	path := filepath.Join(dir, "combined.pem")
+	if err := os.WriteFile(path, append(keyPEM, certPEM...), 0o600); err != nil {
+		t.Fatalf("write PEM: %v", err)
 	}
+	return path
 }
 
 func TestSigner_ReloadPicksUpNewCert(t *testing.T) {
-	pki := signertest.NewPKI(t)
-	priv1, leafDER1 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv1, leafDER1 := issueSelfSignedLeaf(t)
 	dir := t.TempDir()
-	pemPath := signertest.WriteCombinedPEM(t, dir, priv1, leafDER1)
+	pemPath := writeCombinedPEM(t, dir, priv1, leafDER1)
 
 	s, err := NewSigner(&Config{PEMFile: pemPath})
 	if err != nil {
@@ -53,12 +63,17 @@ func TestSigner_ReloadPicksUpNewCert(t *testing.T) {
 	}
 	first := s.creds.Load().leafCert.Raw
 
-	priv2, leafDER2 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
-	keyPEM2, certPEM2 := signertest.EncodePEMBundle(t, priv2, leafDER2)
+	priv2, leafDER2 := issueSelfSignedLeaf(t)
+	keyDER2, err := x509.MarshalPKCS8PrivateKey(priv2)
+	if err != nil {
+		t.Fatalf("marshal PKCS8: %v", err)
+	}
+	keyPEM2 := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER2})
+	certPEM2 := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER2})
 	if err := os.WriteFile(pemPath, append(keyPEM2, certPEM2...), 0o600); err != nil {
 		t.Fatalf("rewrite PEM: %v", err)
 	}
-	if err := s.reloadConfig(); err != nil {
+	if err := s.loadConfig(); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 	if bytes.Equal(first, s.creds.Load().leafCert.Raw) {
@@ -67,10 +82,9 @@ func TestSigner_ReloadPicksUpNewCert(t *testing.T) {
 }
 
 func TestSigner_ReloadKeepsOldOnParseError(t *testing.T) {
-	pki := signertest.NewPKI(t)
-	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv, leafDER := issueSelfSignedLeaf(t)
 	dir := t.TempDir()
-	pemPath := signertest.WriteCombinedPEM(t, dir, priv, leafDER)
+	pemPath := writeCombinedPEM(t, dir, priv, leafDER)
 
 	s, err := NewSigner(&Config{PEMFile: pemPath})
 	if err != nil {
@@ -81,7 +95,7 @@ func TestSigner_ReloadKeepsOldOnParseError(t *testing.T) {
 	if err := os.WriteFile(pemPath, []byte("not a pem"), 0o600); err != nil {
 		t.Fatalf("rewrite PEM: %v", err)
 	}
-	if err := s.reloadConfig(); err == nil {
+	if err := s.loadConfig(); err == nil {
 		t.Fatal("expected reload error on garbage PEM")
 	}
 	if s.creds.Load() != original {

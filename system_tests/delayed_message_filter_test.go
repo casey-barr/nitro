@@ -26,6 +26,7 @@ import (
 	"github.com/offchainlabs/nitro/cmd/chaininfo"
 	filteringreportapi "github.com/offchainlabs/nitro/cmd/filtering-report/api"
 	"github.com/offchainlabs/nitro/cmd/filtering-report/forwarder"
+	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
 	"github.com/offchainlabs/nitro/cmd/transaction-filterer/api"
 	"github.com/offchainlabs/nitro/execution/gethexec/addressfilter"
 	"github.com/offchainlabs/nitro/execution/gethexec/eventfilter"
@@ -170,12 +171,12 @@ func SetupFilteringReport(t *testing.T, builder *NodeBuilder) *forwarder.MockExt
 	t.Helper()
 
 	queueClient := &sqsclient.MockQueueClient{}
-	externalEndpoint := forwarder.NewMockExternalEndpoint(t)
+	pemPath, externalEndpoint := forwarder.NewSignedFixture(t)
 
 	stack := filteringreportapi.NewTestStack(t, queueClient)
 	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = stack.HTTPEndpoint()
 
-	fwd := forwarder.NewTestForwarder(t, queueClient, externalEndpoint.URL())
+	fwd := forwarder.NewTestForwarder(t, queueClient, externalEndpoint.URL(), signer.Config{PEMFile: pemPath})
 	fwd.Start(t.Context())
 	t.Cleanup(func() { fwd.StopAndWait() })
 

@@ -16,7 +16,7 @@ const (
 	pemBlockTypeCertificate = "CERTIFICATE"
 )
 
-func parseCombinedPEM(data []byte) (*credentials, error) {
+func ParseCombinedPEM(data []byte) (*credentials, error) {
 	var privateKey ed25519.PrivateKey
 	var leaf *x509.Certificate
 
@@ -44,7 +44,7 @@ func parseCombinedPEM(data []byte) (*credentials, error) {
 		case pemBlockTypeCertificate:
 			// First CERTIFICATE block is the leaf. Subsequent blocks (e.g. CA chain
 			// from cert-manager's CombinedPEM output) are intentionally ignored:
-			// the spec sends only the leaf in X-Signature-Cert, no intermediates.
+			// only the leaf is included in the X-Signature-Cert header, no intermediates.
 			if leaf != nil {
 				continue
 			}
@@ -81,3 +81,5 @@ func parseCombinedPEM(data []byte) (*credentials, error) {
 		leafCert:   leaf,
 	}, nil
 }
+
+func (c *credentials) LeafCert() *x509.Certificate { return c.leafCert }

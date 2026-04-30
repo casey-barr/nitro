@@ -74,13 +74,9 @@ func New(config *Config, queueClient sqsclient.QueueClient) (*Forwarder, error) 
 	if queueClient == nil {
 		return nil, errors.New("queueClient must not be nil")
 	}
-	var sgn *signer.Signer
-	if config.Signer.Enabled() {
-		var err error
-		sgn, err = signer.NewSigner(&config.Signer)
-		if err != nil {
-			return nil, fmt.Errorf("create signer: %w", err)
-		}
+	sgn, err := signer.NewSigner(&config.Signer)
+	if err != nil {
+		return nil, fmt.Errorf("create signer: %w", err)
 	}
 	return &Forwarder{
 		config:      config,
@@ -92,9 +88,7 @@ func New(config *Config, queueClient sqsclient.QueueClient) (*Forwarder, error) 
 
 func (r *Forwarder) Start(ctx context.Context) {
 	r.StopWaiter.Start(ctx, r)
-	if r.signer != nil {
-		r.StartAndTrackChild(r.signer)
-	}
+	r.StartAndTrackChild(r.signer)
 	for i := uint(0); i < r.config.Workers; i++ {
 		r.CallIteratively(r.pollAndForward)
 	}
@@ -126,10 +120,8 @@ func (r *Forwarder) forwardToEndpoint(ctx context.Context, body string) error {
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if r.signer != nil {
-		if err := r.signer.SignHTTPRequest(req, []byte(body), time.Now()); err != nil {
-			return fmt.Errorf("sign request: %w", err)
-		}
+	if err := r.signer.SignHTTPRequest(req, []byte(body), time.Now()); err != nil {
+		return fmt.Errorf("sign request: %w", err)
 	}
 	resp, err := r.httpClient.Do(req)
 	if err != nil {

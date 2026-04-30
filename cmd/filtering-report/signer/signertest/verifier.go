@@ -1,7 +1,7 @@
 // Copyright 2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
-package signer
+package signertest
 
 import (
 	"crypto/ed25519"
@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
 )
 
 const DefaultTimestampSkew = 5 * time.Minute
@@ -28,7 +30,7 @@ type VerifierConfig struct {
 
 type Verifier struct {
 	rootPool      *x509.CertPool
-	expectedSAN   *url.URL
+	expectedSAN   string
 	timestampSkew time.Duration
 	now           func() time.Time
 }
@@ -51,19 +53,8 @@ func NewVerifier(c *VerifierConfig) (*Verifier, error) {
 	if !pool.AppendCertsFromPEM(rootBytes) {
 		return nil, errors.New("CA root PEM contains no valid certificates")
 	}
-	expectedURI, err := url.Parse(c.ExpectedSAN)
-	if err != nil {
-		return nil, fmt.Errorf("parse expected SAN URI: %w", err)
-	}
-	if !expectedURI.IsAbs() {
-		return nil, fmt.Errorf("expected SAN must be an absolute URI, got %q", c.ExpectedSAN)
-	}
-	skew := c.TimestampSkew
-	if skew < 0 {
-		return nil, fmt.Errorf("timestamp-skew must be >= 0, got %s", skew)
-	}
-	if skew == 0 {
-		skew = DefaultTimestampSkew
+	if c.TimestampSkew < 0 {
+		return nil, fmt.Errorf("timestamp-skew must be >= 0, got %s", c.TimestampSkew)
 	}
 	now := c.Now
 	if now == nil {
@@ -71,16 +62,16 @@ func NewVerifier(c *VerifierConfig) (*Verifier, error) {
 	}
 	return &Verifier{
 		rootPool:      pool,
-		expectedSAN:   expectedURI,
-		timestampSkew: skew,
+		expectedSAN:   c.ExpectedSAN,
+		timestampSkew: c.TimestampSkew,
 		now:           now,
 	}, nil
 }
 
 func (v *Verifier) VerifyHTTPRequest(req *http.Request, rawBody []byte) error {
-	sigHeader := req.Header.Get(HeaderSignature)
-	certHeader := req.Header.Get(HeaderSignatureCert)
-	tsHeader := req.Header.Get(HeaderSignatureTimestamp)
+	sigHeader := req.Header.Get(signer.HeaderSignature)
+	certHeader := req.Header.Get(signer.HeaderSignatureCert)
+	tsHeader := req.Header.Get(signer.HeaderSignatureTimestamp)
 	if sigHeader == "" || certHeader == "" || tsHeader == "" {
 		return errors.New("missing signature headers")
 	}
@@ -105,8 +96,6 @@ func (v *Verifier) VerifyHTTPRequest(req *http.Request, rawBody []byte) error {
 	}
 
 	now := v.now()
-	// ExtKeyUsageAny: cert-manager-issued leaves don't set ExtKeyUsage; the spec
-	// only requires the KeyUsageDigitalSignature bit (checked separately below).
 	if _, err := leaf.Verify(x509.VerifyOptions{
 		Roots:       v.rootPool,
 		CurrentTime: now,
@@ -119,8 +108,8 @@ func (v *Verifier) VerifyHTTPRequest(req *http.Request, rawBody []byte) error {
 		return errors.New("leaf certificate missing DigitalSignature key usage")
 	}
 
-	if !slices.ContainsFunc(leaf.URIs, func(u *url.URL) bool { return u.String() == v.expectedSAN.String() }) {
-		return fmt.Errorf("leaf certificate SAN does not contain expected URI %q", v.expectedSAN.String())
+	if !slices.ContainsFunc(leaf.URIs, func(u *url.URL) bool { return u.String() == v.expectedSAN }) {
+		return fmt.Errorf("leaf certificate SAN does not contain expected URI %q", v.expectedSAN)
 	}
 
 	tsSeconds, err := strconv.ParseInt(tsHeader, 10, 64)
@@ -136,7 +125,7 @@ func (v *Verifier) VerifyHTTPRequest(req *http.Request, rawBody []byte) error {
 	if !ok {
 		return fmt.Errorf("leaf certificate public key is not Ed25519 (got %T)", leaf.PublicKey)
 	}
-	payload := buildSigningPayload(tsHeader, rawBody)
+	payload := signer.BuildSigningPayload(tsHeader, rawBody)
 	if !ed25519.Verify(publicKey, payload, signature) {
 		return errors.New("signature verification failed")
 	}
