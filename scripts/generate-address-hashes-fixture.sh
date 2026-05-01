@@ -17,7 +17,7 @@
 #
 # Cross-platform: macOS and Linux.
 
-set -eu
+set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -91,7 +91,7 @@ STAT_FLAVOR=""
 
 detect_tools() {
     local cmd
-    for cmd in xxd uuidgen tr awk sed printf head; do
+    for cmd in uuidgen tr awk printf; do
         command -v "$cmd" >/dev/null 2>&1 || die "required command not found: $cmd"
     done
 
@@ -157,7 +157,9 @@ while [[ $# -gt 0 ]]; do
         --addresses)      [[ $# -ge 2 ]] || die "$1 requires a value"; EXTRA_ADDRESSES="$2"; shift 2 ;;
         --salt)           [[ $# -ge 2 ]] || die "$1 requires a value"; SALT_OVERRIDE="$2"; shift 2 ;;
         --seed)           [[ $# -ge 2 ]] || die "$1 requires a value"; SEED="$2"; shift 2 ;;
-        --jobs)           [[ $# -ge 2 ]] || die "$1 requires a value"; JOBS="$2"; shift 2 ;;
+        --jobs)           [[ $# -ge 2 ]] || die "$1 requires a value"
+                          [[ "$2" =~ ^[1-9][0-9]*$ ]] || die "invalid --jobs: $2 (expected a positive integer)"
+                          JOBS="$2"; shift 2 ;;
         -h|--help)        usage; exit 0 ;;
         *)                die "unknown argument: $1 (use --help)" ;;
     esac
