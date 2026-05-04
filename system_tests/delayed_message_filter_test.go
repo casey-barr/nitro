@@ -2656,6 +2656,9 @@ func TestDelayedMessageFilterCatchesEventFilter(t *testing.T) {
 	builder.isSequencer = true
 	builder.nodeConfig.DelayedSequencer.Enable = true
 	builder.nodeConfig.DelayedSequencer.FinalizeDistance = 1
+
+	filteringReportStack, reportAPI := SetupFilteringReport(t)
+	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
 	cleanup := builder.Build(t)
 	defer cleanup()
 
@@ -2696,72 +2699,7 @@ func TestDelayedMessageFilterCatchesEventFilter(t *testing.T) {
 	// with the filtered address in a topic
 	waitForDelayedSequencerHaltOnHashes(t, ctx, builder, []common.Hash{txHash}, 10*time.Second)
 
-	// Add tx hash to onchain filter to allow it through
-	addTxHashToOnChainFilter(t, ctx, builder, txHash, "Filterer")
-
-	waitForDelayedSequencerResume(t, ctx, builder, 10*time.Second)
-
-	advanceL1ForDelayed(t, ctx, builder)
-
-	// Tx should now be processed (as a filtered no-op with failed receipt)
-	receipt, err := WaitForTx(ctx, builder.L2.Client, txHash, time.Second*10)
-	require.NoError(t, err)
-	require.Equal(t, types.ReceiptStatusFailed, receipt.Status,
-		"filtered tx should have failed receipt status")
-}
-
-// TestDelayedMessageFilterCatchesEventFilterReport verifies that the filtering
-// report includes a non-nil EventRuleMatch when the delayed message is filtered
-// via an event filter rule (not a direct address match).
-func TestDelayedMessageFilterCatchesEventFilterReport(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	selector, _, err := eventfilter.CanonicalSelectorFromEvent("Transfer(address,address,uint256)")
-	require.NoError(t, err)
-	rules := []eventfilter.EventRule{{
-		Event:          "Transfer(address,address,uint256)",
-		Selector:       selector,
-		TopicAddresses: []int{1, 2},
-	}}
-
-	arbOSInit := &params.ArbOSInit{TransactionFilteringEnabled: true}
-	builder := NewNodeBuilder(ctx).
-		DefaultConfig(t, true).
-		WithArbOSVersion(params.ArbosVersion_60).
-		WithArbOSInit(arbOSInit).
-		WithEventFilterRules(rules)
-	builder.isSequencer = true
-	builder.nodeConfig.DelayedSequencer.Enable = true
-	builder.nodeConfig.DelayedSequencer.FinalizeDistance = 1
-
-	filteringReportStack, reportAPI := SetupFilteringReport(t)
-	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
-	cleanup := builder.Build(t)
-	defer cleanup()
-
-	builder.L2Info.GenerateAccount("Sender")
-	builder.L2Info.GenerateAccount("FilteredTarget")
-	builder.L2.TransferBalance(t, "Owner", "Sender", big.NewInt(1e18), builder.L2Info)
-
-	senderAddr := builder.L2Info.GetAddress("Sender")
-	filteredAddr := builder.L2Info.GetAddress("FilteredTarget")
-	contractAddr, _ := deployAddressFilterTestContractForDelayed(t, ctx, builder)
-
-	addrFilter := newHashedChecker([]common.Address{filteredAddr})
-	builder.L2.ExecNode.ExecEngine.SetAddressChecker(t, addrFilter)
-
-	contractABI, err := localgen.AddressFilterTestMetaData.GetAbi()
-	require.NoError(t, err)
-	callData, err := contractABI.Pack("emitTransfer", senderAddr, filteredAddr)
-	require.NoError(t, err)
-
-	delayedTx := prepareDelayedContractCall(t, builder, "Sender", contractAddr, callData)
-	txHash := sendDelayedTx(t, ctx, builder, delayedTx)
-	advanceL1ForDelayed(t, ctx, builder)
-	waitForDelayedSequencerHaltOnHashes(t, ctx, builder, []common.Hash{txHash}, 10*time.Second)
-
-	// Verify report
+	// Verify filtering report
 	report := reportAPI.NextReport(t)
 	CheckCommonReportFields(t, ctx, builder, report, delayedTx)
 	require.True(t, report.IsDelayed)
@@ -2769,7 +2707,6 @@ func TestDelayedMessageFilterCatchesEventFilterReport(t *testing.T) {
 	require.NotEqual(t, common.Hash{}, report.DelayedReportData.InboxRequestId,
 		"InboxRequestId should be populated from the delayed message header")
 
-	// Find the event-rule-triggered filtered address
 	foundEventRule := false
 	for _, addr := range report.FilteredAddresses {
 		if addr.Address == filteredAddr && addr.Reason == filterTypes.ReasonEventRule {
@@ -2782,6 +2719,19 @@ func TestDelayedMessageFilterCatchesEventFilterReport(t *testing.T) {
 	}
 	require.True(t, foundEventRule,
 		"report should contain filtered address with event_rule reason")
+
+	// Add tx hash to onchain filter to allow it through
+	addTxHashToOnChainFilter(t, ctx, builder, txHash, "Filterer")
+
+	waitForDelayedSequencerResume(t, ctx, builder, 10*time.Second)
+
+	advanceL1ForDelayed(t, ctx, builder)
+
+	// Tx should now be processed (as a filtered no-op with failed receipt)
+	receipt, err := WaitForTx(ctx, builder.L2.Client, txHash, time.Second*10)
+	require.NoError(t, err)
+	require.Equal(t, types.ReceiptStatusFailed, receipt.Status,
+		"filtered tx should have failed receipt status")
 }
 
 // TestFilteredArbitrumDepositTx verifies that an L1->L2 ETH deposit (ArbitrumDepositTx)
