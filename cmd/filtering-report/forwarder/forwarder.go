@@ -88,6 +88,30 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	sqsclient.QueueConfigAddOptions(prefix+".poison-queue", f)
 }
 
+// Forwarder polls messages from an SQS queue and forwards them to an external
+// HTTP endpoint. Error handling follows two paths:
+//
+//   - Non-retryable HTTP errors (4xx client errors, except 408/425/429) indicate
+//     the message itself is permanently invalid. These are sent directly to an
+//     optional poison queue and deleted from the main queue. The poison queue can
+//     be used for manual inspection, reprocessing, or simply discarded.
+//
+//   - Retryable HTTP errors (5xx, 408, 425, 429) leave the message in the queue
+//     for SQS to redeliver after its visibility timeout expires. Since all reports
+//     target the same endpoint, a per-worker slowdown kicks in after a configurable
+//     number of consecutive retryable errors, preventing workers from hammering a
+//     degraded endpoint and avoiding unnecessary consumption of the SQS max receive
+//     count quota.
+//
+// The SQS queue should be configured with a small default visibility timeout
+// (e.g. 1-3 minutes) and a high max receive count (e.g. 300+). The visibility
+// timeout only needs to be long enough for a single forward attempt; the
+// worker-level slowdown handles rate limiting during outages. A small visibility
+// timeout ensures messages become available quickly once the endpoint recovers.
+// For example, with a visibility timeout of 2 minutes and a max receive count of
+// 300, the minimum retry window per message is 300 × 2 min = 600 min = 10 hours.
+// In practice the effective interval is longer because the worker slowdown spaces
+// out attempts, so the actual retry window will be considerably larger.
 type Forwarder struct {
 	stopwaiter.StopWaiter
 	config            *Config
