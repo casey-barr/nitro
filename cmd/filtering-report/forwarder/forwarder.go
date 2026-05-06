@@ -24,12 +24,12 @@ import (
 )
 
 type ExternalEndpointRetryableHTTPErrorSlowdownConfig struct {
-	Duration                time.Duration `koanf:"duration"`
+	Duration                       time.Duration `koanf:"duration"`
 	ConsecutiveRetryableHTTPErrors int           `koanf:"consecutive-retryable-errors"`
 }
 
 var DefaultExternalEndpointRetryableHTTPErrorSlowdownConfig = ExternalEndpointRetryableHTTPErrorSlowdownConfig{
-	Duration:                2 * time.Minute,
+	Duration:                       2 * time.Minute,
 	ConsecutiveRetryableHTTPErrors: 3,
 }
 
@@ -49,21 +49,21 @@ func ExternalEndpointRetryableHTTPErrorSlowdownConfigAddOptions(prefix string, f
 }
 
 type Config struct {
-	Workers                             uint                                       `koanf:"workers"`
-	PollInterval                        time.Duration                              `koanf:"poll-interval"`
-	SQSWaitTimeSeconds                  int32                                      `koanf:"sqs-wait-time-seconds"`
-	ExternalEndpoint                    genericconf.HTTPClientConfig               `koanf:"external-endpoint"`
-	ExternalEndpointRetryableHTTPErrorSlowdown ExternalEndpointRetryableHTTPErrorSlowdownConfig  `koanf:"external-endpoint-retryable-error-slowdown"`
-	PoisonQueue                         sqsclient.QueueConfig                      `koanf:"poison-queue"`
+	Workers                                    uint                                             `koanf:"workers"`
+	PollInterval                               time.Duration                                    `koanf:"poll-interval"`
+	SQSWaitTimeSeconds                         int32                                            `koanf:"sqs-wait-time-seconds"`
+	ExternalEndpoint                           genericconf.HTTPClientConfig                     `koanf:"external-endpoint"`
+	ExternalEndpointRetryableHTTPErrorSlowdown ExternalEndpointRetryableHTTPErrorSlowdownConfig `koanf:"external-endpoint-retryable-error-slowdown"`
+	PoisonQueue                                sqsclient.QueueConfig                            `koanf:"poison-queue"`
 }
 
 var DefaultConfig = Config{
-	Workers:                             1,
-	PollInterval:                        1 * time.Second,
-	SQSWaitTimeSeconds:                  5,
-	ExternalEndpoint:                    genericconf.HTTPClientConfigDefault,
+	Workers:            1,
+	PollInterval:       1 * time.Second,
+	SQSWaitTimeSeconds: 5,
+	ExternalEndpoint:   genericconf.HTTPClientConfigDefault,
 	ExternalEndpointRetryableHTTPErrorSlowdown: DefaultExternalEndpointRetryableHTTPErrorSlowdownConfig,
-	PoisonQueue:                         sqsclient.DefaultQueueConfig,
+	PoisonQueue: sqsclient.DefaultQueueConfig,
 }
 
 func (c *Config) Validate() error {
@@ -90,10 +90,10 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
 
 type Forwarder struct {
 	stopwaiter.StopWaiter
-	config      *Config
-	queueClient sqsclient.QueueClient
+	config            *Config
+	queueClient       sqsclient.QueueClient
 	poisonQueueClient sqsclient.QueueClient
-	httpClient  *http.Client
+	httpClient        *http.Client
 }
 
 func New(config *Config, queueClient sqsclient.QueueClient, poisonQueueClient sqsclient.QueueClient) (*Forwarder, error) {

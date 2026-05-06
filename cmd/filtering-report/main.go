@@ -132,8 +132,8 @@ func parseConfig(args []string) (*FilteringReportConfig, error) {
 	}
 	if config.Conf.Dump {
 		err = confighelpers.DumpConfig(k, map[string]interface{}{
-			"queue.sqs-client.access-key":                            "",
-			"queue.sqs-client.secret-key":                            "",
+			"queue.sqs-client.access-key":                         "",
+			"queue.sqs-client.secret-key":                         "",
 			"report-forwarder.poison-queue.sqs-client.access-key": "",
 			"report-forwarder.poison-queue.sqs-client.secret-key": "",
 		})
