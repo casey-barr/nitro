@@ -165,6 +165,7 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableHTTP
 					return r.config.ExternalEndpointRetryableHTTPErrorSlowdown.Duration
 				}
 			} else {
+				*consecutiveRetryableHTTPErrors = 0
 				r.sendToPoisonQueue(ctx, msg)
 			}
 		}

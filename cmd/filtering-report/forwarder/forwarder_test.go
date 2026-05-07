@@ -330,6 +330,66 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnSuccess(t *testing.T) {
 	}
 }
 
+func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnNonRetryableError(t *testing.T) {
+	var mu sync.Mutex
+	callCount := 0
+	failRetryableUntil := 2 // first 2 calls return 500, third returns 400
+	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		callCount++
+		n := callCount
+		mu.Unlock()
+		if n <= failRetryableUntil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer externalEndpointServer.Close()
+
+	queueClient := &sqsclient.MockQueueClient{}
+	stack := api.NewTestStack(t, queueClient)
+	rpcClient := stack.Attach()
+	t.Cleanup(func() { rpcClient.Close() })
+
+	reports := make([]addressfilter.FilteredTxReport, 3)
+	for i := range reports {
+		reports[i] = addressfilter.FilteredTxReport{
+			ID:                "",
+			TxHash:            common.HexToHash(fmt.Sprintf("0x%02x", i+1)),
+			TxRLP:             nil,
+			FilteredAddresses: nil,
+			ChainID:           0,
+			BlockNumber:       0,
+			ParentBlockHash:   common.Hash{},
+			PositionInBlock:   0,
+			FilteredAt:        time.Time{},
+			IsDelayed:         false,
+			DelayedReportData: nil,
+		}
+	}
+	if err := rpcClient.Call(nil, "filteringreport_reportFilteredTransactions", reports); err != nil {
+		t.Fatal(err)
+	}
+
+	forwarder := NewTestForwarder(t, queueClient, nil, externalEndpointServer.URL)
+	ctx := t.Context()
+	var consecutiveRetryableHTTPErrors int
+
+	// Two retryable errors.
+	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
+	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
+	if consecutiveRetryableHTTPErrors != 2 {
+		t.Fatalf("expected 2 consecutive retryable errors, got %d", consecutiveRetryableHTTPErrors)
+	}
+
+	// Non-retryable error should reset counter.
+	forwarder.pollAndForward(ctx, &consecutiveRetryableHTTPErrors)
+	if consecutiveRetryableHTTPErrors != 0 {
+		t.Fatalf("expected counter reset to 0 after non-retryable error, got %d", consecutiveRetryableHTTPErrors)
+	}
+}
+
 func TestForwarder_RetryableHTTPErrorSlowdown_NonRetryableErrorDoesNotCount(t *testing.T) {
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest) // 400 - non-retryable client error
