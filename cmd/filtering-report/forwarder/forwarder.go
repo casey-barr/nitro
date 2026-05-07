@@ -24,12 +24,12 @@ import (
 )
 
 type ExternalEndpointRetryableErrorSlowdownConfig struct {
-	Duration                       time.Duration `koanf:"duration"`
+	Duration                   time.Duration `koanf:"duration"`
 	ConsecutiveRetryableErrors int           `koanf:"consecutive-retryable-errors"`
 }
 
 var DefaultExternalEndpointRetryableErrorSlowdownConfig = ExternalEndpointRetryableErrorSlowdownConfig{
-	Duration:                       2 * time.Minute,
+	Duration:                   2 * time.Minute,
 	ConsecutiveRetryableErrors: 3,
 }
 
@@ -49,21 +49,21 @@ func ExternalEndpointRetryableErrorSlowdownConfigAddOptions(prefix string, f *pf
 }
 
 type Config struct {
-	Workers                                    uint                                             `koanf:"workers"`
-	PollInterval                               time.Duration                                    `koanf:"poll-interval"`
-	SQSWaitTimeSeconds                         int32                                            `koanf:"sqs-wait-time-seconds"`
-	ExternalEndpoint                           genericconf.HTTPClientConfig                     `koanf:"external-endpoint"`
+	Workers                                uint                                         `koanf:"workers"`
+	PollInterval                           time.Duration                                `koanf:"poll-interval"`
+	SQSWaitTimeSeconds                     int32                                        `koanf:"sqs-wait-time-seconds"`
+	ExternalEndpoint                       genericconf.HTTPClientConfig                 `koanf:"external-endpoint"`
 	ExternalEndpointRetryableErrorSlowdown ExternalEndpointRetryableErrorSlowdownConfig `koanf:"external-endpoint-retryable-error-slowdown"`
-	PoisonQueue                                sqsclient.QueueConfig                            `koanf:"poison-queue"`
+	PoisonQueue                            sqsclient.QueueConfig                        `koanf:"poison-queue"`
 }
 
 var DefaultConfig = Config{
-	Workers:            1,
-	PollInterval:       1 * time.Second,
-	SQSWaitTimeSeconds: 5,
-	ExternalEndpoint:   genericconf.HTTPClientConfigDefault,
+	Workers:                                1,
+	PollInterval:                           1 * time.Second,
+	SQSWaitTimeSeconds:                     5,
+	ExternalEndpoint:                       genericconf.HTTPClientConfigDefault,
 	ExternalEndpointRetryableErrorSlowdown: DefaultExternalEndpointRetryableErrorSlowdownConfig,
-	PoisonQueue: sqsclient.DefaultQueueConfig,
+	PoisonQueue:                            sqsclient.DefaultQueueConfig,
 }
 
 func (c *Config) Validate() error {
