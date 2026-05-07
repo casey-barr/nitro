@@ -287,8 +287,8 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnSuccess(t *testing.T) {
 	rpcClient := stack.Attach()
 	t.Cleanup(func() { rpcClient.Close() })
 
-	numMessages := failUntil + 1 // retryable failures + 1 success
-	reports := make([]addressfilter.FilteredTxReport, numMessages)
+	numReports := failUntil + 1 // retryable failures + 1 success
+	reports := make([]addressfilter.FilteredTxReport, numReports)
 	for i := range reports {
 		reports[i] = addressfilter.FilteredTxReport{
 			ID:                "",
@@ -344,7 +344,8 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnNonRetryableError(t *testin
 	rpcClient := stack.Attach()
 	t.Cleanup(func() { rpcClient.Close() })
 
-	reports := make([]addressfilter.FilteredTxReport, 3)
+	numReports := failRetryableUntil + 1 // retryable failures + 1 non-retryable
+	reports := make([]addressfilter.FilteredTxReport, numReports)
 	for i := range reports {
 		reports[i] = addressfilter.FilteredTxReport{
 			ID:                "",
@@ -368,11 +369,12 @@ func TestForwarder_RetryableHTTPErrorSlowdown_ResetOnNonRetryableError(t *testin
 	ctx := t.Context()
 	var consecutiveRetryableErrors int
 
-	// Two retryable errors.
-	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
-	forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
-	if consecutiveRetryableErrors != 2 {
-		t.Fatalf("expected 2 consecutive retryable errors, got %d", consecutiveRetryableErrors)
+	// Retryable errors.
+	for i := 0; i < failRetryableUntil; i++ {
+		forwarder.pollAndForward(ctx, &consecutiveRetryableErrors)
+	}
+	if consecutiveRetryableErrors != failRetryableUntil {
+		t.Fatalf("expected %d consecutive retryable errors, got %d", failRetryableUntil, consecutiveRetryableErrors)
 	}
 
 	// Non-retryable error should reset counter.
