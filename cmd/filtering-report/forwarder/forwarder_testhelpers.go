@@ -19,8 +19,6 @@ import (
 	"github.com/offchainlabs/nitro/util/sqsclient"
 )
 
-const TestSignerSAN = "https://test-webhook-signer.internal"
-
 type MockExternalEndpoint struct {
 	server       *httptest.Server
 	reports      chan *addressfilter.FilteredTxReport

@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	pemBlockTypePrivateKey  = "PRIVATE KEY"
-	pemBlockTypeCertificate = "CERTIFICATE"
+	PEMBlockTypePrivateKey  = "PRIVATE KEY"
+	PEMBlockTypeCertificate = "CERTIFICATE"
 )
 
 func ParseCombinedPEM(data []byte) (*credentials, error) {
@@ -28,7 +28,7 @@ func ParseCombinedPEM(data []byte) (*credentials, error) {
 			break
 		}
 		switch block.Type {
-		case pemBlockTypePrivateKey:
+		case PEMBlockTypePrivateKey:
 			if privateKey != nil {
 				return nil, errors.New("PEM contains more than one PRIVATE KEY block")
 			}
@@ -41,7 +41,7 @@ func ParseCombinedPEM(data []byte) (*credentials, error) {
 				return nil, fmt.Errorf("private key is not Ed25519 (got %T)", key)
 			}
 			privateKey = ed
-		case pemBlockTypeCertificate:
+		case PEMBlockTypeCertificate:
 			// First CERTIFICATE block is the leaf. Subsequent blocks (e.g. CA chain
 			// from cert-manager's CombinedPEM output) are intentionally ignored:
 			// only the leaf is included in the X-Signature-Cert header, no intermediates.

@@ -16,7 +16,11 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/offchainlabs/nitro/cmd/filtering-report/signer"
 )
+
+const DefaultTestSAN = "https://test-webhook-signer.internal"
 
 type PKI struct {
 	CACert *x509.Certificate
@@ -50,7 +54,7 @@ func NewPKI(t *testing.T) *PKI {
 }
 
 func (p *PKI) CACertPEM() []byte {
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: p.CACert.Raw})
+	return pem.EncodeToMemory(&pem.Block{Type: signer.PEMBlockTypeCertificate, Bytes: p.CACert.Raw})
 }
 
 type LeafOptions struct {
@@ -100,8 +104,8 @@ func EncodePEMBundle(t *testing.T, priv ed25519.PrivateKey, leafDER []byte) (key
 	if err != nil {
 		t.Fatalf("marshal PKCS8: %v", err)
 	}
-	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: signer.PEMBlockTypePrivateKey, Bytes: keyDER})
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: signer.PEMBlockTypeCertificate, Bytes: leafDER})
 	return keyPEM, certPEM
 }
 

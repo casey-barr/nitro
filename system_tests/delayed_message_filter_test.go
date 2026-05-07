@@ -193,7 +193,7 @@ func SetupFilteringReport(t *testing.T) (*node.Node, *forwarder.MockExternalEndp
 	t.Helper()
 
 	queueClient := &sqsclient.MockQueueClient{}
-	pemPath, externalEndpoint := forwarder.NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(forwarder.TestSignerSAN))
+	pemPath, externalEndpoint := forwarder.NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 
 	stack := filteringreportapi.NewTestStack(t, queueClient)
 

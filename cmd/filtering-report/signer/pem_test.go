@@ -13,8 +13,6 @@ import (
 	"github.com/offchainlabs/nitro/cmd/filtering-report/signer/signertest"
 )
 
-const testSAN = "https://test-webhook-signer.internal"
-
 func assertErrorContains(t *testing.T, err error, want string) {
 	t.Helper()
 	if err == nil || !strings.Contains(err.Error(), want) {
@@ -24,8 +22,8 @@ func assertErrorContains(t *testing.T, err error, want string) {
 
 func TestParseCombinedPEM_RejectsMismatchedKeyAndCert(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv1, _ := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
-	_, leafDER2 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv1, _ := pki.IssueLeaf(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
+	_, leafDER2 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 
 	keyPEM, certPEM := signertest.EncodePEMBundle(t, priv1, leafDER2)
 	bundle := slices.Concat(keyPEM, certPEM)
@@ -36,7 +34,7 @@ func TestParseCombinedPEM_RejectsMismatchedKeyAndCert(t *testing.T) {
 
 func TestParseCombinedPEM_RejectsKeyOnly(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	keyPEM, _ := signertest.EncodePEMBundle(t, priv, leafDER)
 
 	_, err := signer.ParseCombinedPEM(keyPEM)
@@ -45,7 +43,7 @@ func TestParseCombinedPEM_RejectsKeyOnly(t *testing.T) {
 
 func TestParseCombinedPEM_RejectsCertOnly(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	_, certPEM := signertest.EncodePEMBundle(t, priv, leafDER)
 
 	_, err := signer.ParseCombinedPEM(certPEM)
@@ -54,7 +52,7 @@ func TestParseCombinedPEM_RejectsCertOnly(t *testing.T) {
 
 func TestParseCombinedPEM_RejectsDuplicatePrivateKey(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	keyPEM, certPEM := signertest.EncodePEMBundle(t, priv, leafDER)
 	bundle := slices.Concat(keyPEM, keyPEM, certPEM)
 
@@ -73,7 +71,7 @@ func TestParseCombinedPEM_RejectsCAAsLeaf(t *testing.T) {
 
 func TestParseCombinedPEM_AcceptsLeafFollowedByCAChain(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv, leafDER := pki.IssueLeaf(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	keyPEM, leafCertPEM := signertest.EncodePEMBundle(t, priv, leafDER)
 	bundle := slices.Concat(keyPEM, leafCertPEM, pki.CACertPEM())
 

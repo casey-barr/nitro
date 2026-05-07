@@ -93,11 +93,7 @@ func (s *Signer) Start(ctx context.Context) {
 }
 
 func (s *Signer) LeafCert() *x509.Certificate {
-	creds := s.creds.Load()
-	if creds == nil {
-		return nil
-	}
-	return creds.leafCert
+	return s.creds.Load().leafCert
 }
 
 func (s *Signer) Reload() error {

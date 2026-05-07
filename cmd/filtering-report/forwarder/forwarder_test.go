@@ -22,7 +22,7 @@ import (
 )
 
 func TestForwarder_ForwardsMessages(t *testing.T) {
-	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(TestSignerSAN))
+	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 
 	queueClient := &sqsclient.MockQueueClient{}
 	stack := api.NewTestStack(t, queueClient)
@@ -86,7 +86,7 @@ func TestForwarder_ForwardsMessages(t *testing.T) {
 }
 
 func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
-	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(TestSignerSAN))
+	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	externalEndpointServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -125,7 +125,7 @@ func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
 }
 
 func TestForwarder_EmptyQueue(t *testing.T) {
-	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(TestSignerSAN))
+	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	queueClient := &sqsclient.MockQueueClient{}
 
 	forwarder := NewTestForwarder(t, queueClient, endpoint.URL(), pemPath)
@@ -144,7 +144,7 @@ func TestForwarder_EmptyQueue(t *testing.T) {
 }
 
 func TestForwarder_ReceiveError(t *testing.T) {
-	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(TestSignerSAN))
+	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	queueClient := &sqsclient.MockQueueClient{
 		ReceiveErr: fmt.Errorf("simulated SQS error"),
 	}
@@ -158,7 +158,7 @@ func TestForwarder_ReceiveError(t *testing.T) {
 }
 
 func TestForwarder_DoesNotDeleteOnSignFailure(t *testing.T) {
-	opts := signertest.DefaultLeafOptions(TestSignerSAN)
+	opts := signertest.DefaultLeafOptions(signertest.DefaultTestSAN)
 	opts.NotAfter = time.Now().Add(-time.Minute)
 	pemPath, endpoint := NewMockExternalEndpoint(t, opts)
 
@@ -196,7 +196,7 @@ func TestForwarder_DoesNotDeleteOnSignFailure(t *testing.T) {
 }
 
 func TestForwarder_DeleteError(t *testing.T) {
-	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(TestSignerSAN))
+	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 
 	queueClient := &sqsclient.MockQueueClient{
 		DeleteErr: fmt.Errorf("simulated SQS delete error"),

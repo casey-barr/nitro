@@ -15,7 +15,7 @@ import (
 
 func TestSigner_ReloadPicksUpNewCert(t *testing.T) {
 	pki := signertest.NewPKI(t)
-	priv1, leaf1 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv1, leaf1 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	dir := t.TempDir()
 	pemPath := signertest.WriteCombinedPEM(t, dir, priv1, leaf1)
 
@@ -25,7 +25,7 @@ func TestSigner_ReloadPicksUpNewCert(t *testing.T) {
 	}
 	first := s.LeafCert().Raw
 
-	priv2, leaf2 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(testSAN))
+	priv2, leaf2 := pki.IssueLeaf(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 	keyPEM, certPEM := signertest.EncodePEMBundle(t, priv2, leaf2)
 	if err := os.WriteFile(pemPath, append(keyPEM, certPEM...), 0o600); err != nil {
 		t.Fatalf("rewrite PEM: %v", err)
@@ -39,7 +39,7 @@ func TestSigner_ReloadPicksUpNewCert(t *testing.T) {
 }
 
 func TestSigner_ReloadKeepsOldOnParseError(t *testing.T) {
-	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(testSAN))
+	pemPath, _ := signertest.SigningFixture(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
 
 	s, err := signer.NewSigner(&signer.Config{PEMFile: pemPath, ReloadInterval: time.Hour})
 	if err != nil {
