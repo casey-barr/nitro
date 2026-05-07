@@ -1,4 +1,5 @@
 #include "softfloat.h"
+#include "canonicalize.h"
 
 bool f32_isReal(float32_t f) {
 	uint32_t exponentMask = (1u << 31) - (1u << 23);
@@ -6,19 +7,7 @@ bool f32_isReal(float32_t f) {
 }
 
 bool f32_isNaN(float32_t f) {
-	if (f32_isReal(f)) return false;
-	uint32_t fraction = f.v & ((1 << 23) - 1);
-	return fraction != 0;
-}
-
-// Canonical quiet NaN for f32: sign=0, exponent=0xFF, MSB of mantissa=1, rest=0.
-// JIT (Cranelift/LLVM) always produces this value when an operation yields NaN
-// (canonicalize_nans=true). WAVM must match to keep execution traces in sync.
-static const uint32_t F32_CANONICAL_NAN = 0x7FC00000;
-
-static inline uint32_t f32_canonicalize(uint32_t v) {
-	float32_t f = {v};
-	return f32_isNaN(f) ? F32_CANONICAL_NAN : v;
+	return f32_bits_isNaN(f.v);
 }
 
 bool f32_isInfinity(float32_t f) {

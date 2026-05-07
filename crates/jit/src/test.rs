@@ -92,6 +92,54 @@ fn call_i32_binop(
     }
 }
 
+fn jit_f32_from_f64_unop(op: &str) -> Result<(Store, Instance)> {
+    let wat = format!(
+        r#"(module
+               (func (export "op") (param i64) (result i32)
+                   (f64.reinterpret_i64 (local.get 0))
+                   ({op})
+                   (i32.reinterpret_f32)))"#
+    );
+    let wasm = wasmer::wat2wasm(wat.as_bytes())?.to_vec();
+    let mut store = make_jit_store();
+    let module = Module::new(&store, &wasm)?;
+    let instance = Instance::new(&mut store, &module, &imports! {})?;
+    Ok((store, instance))
+}
+
+fn jit_f64_from_f32_unop(op: &str) -> Result<(Store, Instance)> {
+    let wat = format!(
+        r#"(module
+               (func (export "op") (param i32) (result i64)
+                   (f32.reinterpret_i32 (local.get 0))
+                   ({op})
+                   (i64.reinterpret_f64)))"#
+    );
+    let wasm = wasmer::wat2wasm(wat.as_bytes())?.to_vec();
+    let mut store = make_jit_store();
+    let module = Module::new(&store, &wasm)?;
+    let instance = Instance::new(&mut store, &module, &imports! {})?;
+    Ok((store, instance))
+}
+
+fn call_i32_from_i64(store: &mut Store, instance: &Instance, fname: &str, a: u64) -> Result<u32> {
+    let f = instance.exports.get_function(fname)?;
+    let res = f.call(store, &[Value::I64(a as i64)])?;
+    match res[0] {
+        Value::I32(x) => Ok(x as u32),
+        _ => bail!("expected i32 result"),
+    }
+}
+
+fn call_i64_from_i32(store: &mut Store, instance: &Instance, fname: &str, a: u32) -> Result<u64> {
+    let f = instance.exports.get_function(fname)?;
+    let res = f.call(store, &[Value::I32(a as i32)])?;
+    match res[0] {
+        Value::I64(x) => Ok(x as u64),
+        _ => bail!("expected i64 result"),
+    }
+}
+
 fn call_i64_binop(
     store: &mut Store,
     instance: &Instance,
@@ -234,6 +282,52 @@ fn test_f32_add_generated_nan_canonicalization() -> Result<()> {
     assert_eq!(
         soft_bits, canonical_nan,
         "soft-float f32.add(+∞, -∞): got 0x{soft_bits:08x}, want canonical NaN 0x{canonical_nan:08x}"
+    );
+    Ok(())
+}
+
+/// Confirms that demoting a non-canonical f64 NaN to f32 yields the canonical f32 NaN.
+///
+/// SoftFloat's f64_to_f32 converts via a commonNaN struct that preserves the sign
+/// and upper mantissa bits, potentially producing a non-canonical f32 NaN.
+/// JIT canonicalizes the result, so the two sides diverge without the fix.
+#[test]
+fn test_f32_demote_f64_nan_canonicalization() -> Result<()> {
+    // Non-canonical f64 NaN with a non-zero payload that survives demotion.
+    // 0x7FF0000000000001 is an sNaN; its upper mantissa bits map into the f32 payload.
+    let snan_f64: u64 = 0x7FF0000000000001;
+    let canonical_nan_f32: u32 = 0x7FC00000;
+
+    let (mut sf_store, sf) = load_soft_float()?;
+    let soft_bits = call_i32_from_i64(&mut sf_store, &sf, "wavm__f32_demote_f64", snan_f64)?;
+
+    let (mut jit_store, jit) = jit_f32_from_f64_unop("f32.demote_f64")?;
+    let jit_bits = call_i32_from_i64(&mut jit_store, &jit, "op", snan_f64)?;
+
+    assert_eq!(jit_bits, canonical_nan_f32, "JIT f32.demote_f64 should return canonical f32 NaN");
+    assert_eq!(
+        soft_bits, canonical_nan_f32,
+        "soft-float f32.demote_f64: got 0x{soft_bits:08x}, want canonical f32 NaN 0x{canonical_nan_f32:08x}"
+    );
+    Ok(())
+}
+
+/// Confirms that promoting a non-canonical f32 NaN to f64 yields the canonical f64 NaN.
+#[test]
+fn test_f64_promote_f32_nan_canonicalization() -> Result<()> {
+    let snan_f32: u32 = 0x7F800001;
+    let canonical_nan_f64: u64 = 0x7FF8000000000000;
+
+    let (mut sf_store, sf) = load_soft_float()?;
+    let soft_bits = call_i64_from_i32(&mut sf_store, &sf, "wavm__f64_promote_f32", snan_f32)?;
+
+    let (mut jit_store, jit) = jit_f64_from_f32_unop("f64.promote_f32")?;
+    let jit_bits = call_i64_from_i32(&mut jit_store, &jit, "op", snan_f32)?;
+
+    assert_eq!(jit_bits, canonical_nan_f64, "JIT f64.promote_f32 should return canonical f64 NaN");
+    assert_eq!(
+        soft_bits, canonical_nan_f64,
+        "soft-float f64.promote_f32: got 0x{soft_bits:016x}, want canonical f64 NaN 0x{canonical_nan_f64:016x}"
     );
     Ok(())
 }

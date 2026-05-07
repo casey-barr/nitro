@@ -1,4 +1,5 @@
 #include "softfloat.h"
+#include "canonicalize.h"
 
 bool f64_isReal(float64_t f) {
 	uint64_t exponentMask = (1ull << 63) - (1ull << 52);
@@ -6,19 +7,7 @@ bool f64_isReal(float64_t f) {
 }
 
 bool f64_isNaN(float64_t f) {
-	if (f64_isReal(f)) return false;
-	uint64_t fraction = f.v & ((1ull << 52) - 1);
-	return fraction != 0;
-}
-
-// Canonical quiet NaN for f64: sign=0, exponent=0x7FF, MSB of mantissa=1, rest=0.
-// JIT (Cranelift/LLVM) always produces this value when an operation yields NaN
-// (canonicalize_nans=true). WAVM must match to keep execution traces in sync.
-static const uint64_t F64_CANONICAL_NAN = 0x7FF8000000000000ULL;
-
-static inline uint64_t f64_canonicalize(uint64_t v) {
-	float64_t f = {v};
-	return f64_isNaN(f) ? F64_CANONICAL_NAN : v;
+	return f64_bits_isNaN(f.v);
 }
 
 bool f64_isInfinity(float64_t f) {
@@ -337,10 +326,10 @@ uint64_t wavm__f64_convert_i64_u(uint64_t x) {
 
 uint32_t wavm__f32_demote_f64(uint64_t x) {
 	float64_t f = {x};
-	return f64_to_f32(f).v;
+	return f32_canonicalize(f64_to_f32(f).v);
 }
 
 uint64_t wavm__f64_promote_f32(uint32_t x) {
 	float32_t f = {x};
-	return f32_to_f64(f).v;
+	return f64_canonicalize(f32_to_f64(f).v);
 }
