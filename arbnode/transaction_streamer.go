@@ -1443,6 +1443,19 @@ func (s *TransactionStreamer) storeResult(
 	return batch.Put(key, msgResultBytes)
 }
 
+// logReadMessageErr logs a message-read failure from ExecuteNextMsg through
+// accNotFoundErrHandler so AccumulatorNotFoundErr is throttled, and emits a
+// descriptive message for that case while leaving other failures (DB, RLP,
+// data-hash mismatch, etc.) under the generic "failed to readMessage".
+func (s *TransactionStreamer) logReadMessageErr(err error, msgIdxField string, msgIdx arbutil.MessageIndex) {
+	logger := s.accNotFoundErrHandler.LogLevel(err, log.Error)
+	if errors.Is(err, AccumulatorNotFoundErr) {
+		logger("ExecuteNextMsg waiting for inbox tracker to index batch referenced by message; usually transient while the parent-chain reader catches up", "err", err, msgIdxField, msgIdx)
+		return
+	}
+	logger("ExecuteNextMsg failed to readMessage", "err", err, msgIdxField, msgIdx)
+}
+
 // exposed for testing
 // return value: true if should be called again immediately
 func (s *TransactionStreamer) ExecuteNextMsg(ctx context.Context) bool {
@@ -1479,14 +1492,14 @@ func (s *TransactionStreamer) ExecuteNextMsg(ctx context.Context) bool {
 
 	msgAndBlockInfo, err := s.getMessageWithMetadataAndBlockInfo(msgIdxToExecute)
 	if err != nil {
-		s.accNotFoundErrHandler.LogLevel(err, log.Error)("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute", msgIdxToExecute)
+		s.logReadMessageErr(err, "msgIdxToExecute", msgIdxToExecute)
 		return false
 	}
 	var msgForPrefetch *arbostypes.MessageWithMetadata
 	if msgIdxToExecute+1 <= consensusHeadMsgIdx {
 		msg, err := s.GetMessage(msgIdxToExecute + 1)
 		if err != nil {
-			s.accNotFoundErrHandler.LogLevel(err, log.Error)("ExecuteNextMsg failed to readMessage", "err", err, "msgIdxToExecute+1", msgIdxToExecute+1)
+			s.logReadMessageErr(err, "msgIdxToExecute+1", msgIdxToExecute+1)
 			return false
 		}
 		msgForPrefetch = msg
