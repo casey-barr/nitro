@@ -16,6 +16,9 @@ import (
 // println(hex.EncodeToString(sig))
 const sampleSignature = "a0b37f8fba683cc68f6574cd43b39f0343a50008bf6ccea9d13231d9e7e2e1e411edc8d307254296264aebfc3dc76cd8b668373a072fd64665b50000e9fcce5201"
 
+// PopulateEcdsaCaches is called early to populate the secp256k1 ecc basepoint
+// cache in the cached early machine state. That means we don't need to
+// re-compute it for every block.
 func PopulateEcdsaCaches() {
 	signature, err := hex.DecodeString(sampleSignature)
 	if err != nil {
