@@ -51,7 +51,7 @@ func StubInit() {
 }
 
 func StubFinal() {
-	log.Info("endMelStateHash", endMelStateHash.Hex())
+	log.Info("final MEL state hash", "endMelStateHash", endMelStateHash.Hex())
 }
 
 func GetLastBlockHash() (hash common.Hash) {
