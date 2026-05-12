@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ import (
 )
 
 func TestForwarder_ForwardsMessages(t *testing.T) {
-	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
+	pemPath, endpoint := NewMockExternalEndpoint(t)
 
 	queueClient := &sqsclient.MockQueueClient{}
 	stack := api.NewTestStack(t, queueClient)
@@ -127,7 +128,7 @@ func TestForwarder_EndpointFailure_DoesNotDelete(t *testing.T) {
 }
 
 func TestForwarder_EmptyQueue(t *testing.T) {
-	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
+	pemPath, endpoint := NewMockExternalEndpoint(t)
 	queueClient := &sqsclient.MockQueueClient{}
 
 	forwarder := NewTestForwarder(t, queueClient, endpoint.URL(), pemPath)
@@ -146,7 +147,7 @@ func TestForwarder_EmptyQueue(t *testing.T) {
 }
 
 func TestForwarder_ReceiveError(t *testing.T) {
-	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
+	pemPath, endpoint := NewMockExternalEndpoint(t)
 	queueClient := &sqsclient.MockQueueClient{
 		ReceiveErr: fmt.Errorf("simulated SQS error"),
 	}
@@ -176,13 +177,17 @@ func TestForwarder_FailsConstructionOnExpiredLeaf(t *testing.T) {
 		},
 		Signer: signerCfg,
 	}
-	if _, err := New(config, &sqsclient.MockQueueClient{}); err == nil {
+	_, err := New(config, &sqsclient.MockQueueClient{})
+	if err == nil {
 		t.Fatal("expected New to fail on expired leaf")
+	}
+	if !strings.Contains(err.Error(), "leaf certificate") {
+		t.Fatalf("expected signer leaf-certificate error, got: %v", err)
 	}
 }
 
 func TestForwarder_DeleteError(t *testing.T) {
-	pemPath, endpoint := NewMockExternalEndpoint(t, signertest.DefaultLeafOptions(signertest.DefaultTestSAN))
+	pemPath, endpoint := NewMockExternalEndpoint(t)
 
 	queueClient := &sqsclient.MockQueueClient{
 		DeleteErr: fmt.Errorf("simulated SQS delete error"),

@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 
 	"github.com/offchainlabs/nitro/util/stopwaiter"
 )
@@ -28,6 +29,8 @@ const (
 	HeaderSignatureCert      = "X-Signature-Cert"
 	HeaderSignatureTimestamp = "X-Signature-Timestamp"
 )
+
+var reloadFailuresCounter = metrics.NewRegisteredCounter("arb/txfiltering/report/signer/reload_failures_total", nil)
 
 type Config struct {
 	PEMFile        string        `koanf:"pem-file"`
@@ -84,6 +87,7 @@ func (s *Signer) Start(ctx context.Context) {
 	s.StopWaiter.Start(ctx, s)
 	s.CallIteratively(func(_ context.Context) time.Duration {
 		if err := s.Reload(); err != nil {
+			reloadFailuresCounter.Inc(1)
 			log.Error("Failed to reload signing PEM, retaining previous credentials", "err", err, "file", s.pemFile)
 		} else {
 			log.Info("Reloaded signing PEM", "file", s.pemFile)
@@ -105,31 +109,25 @@ func (s *Signer) Reload() error {
 	if err != nil {
 		return err
 	}
-	if err := checkLeafValidity(creds.leafCert, time.Now()); err != nil {
+	if err := checkLeafValidity(creds.leafCert, time.Now(), s.reloadInterval); err != nil {
 		return err
 	}
 	s.creds.Store(creds)
 	return nil
 }
 
-func checkLeafValidity(leaf *x509.Certificate, now time.Time) error {
+func checkLeafValidity(leaf *x509.Certificate, now time.Time, reloadInterval time.Duration) error {
 	if now.Before(leaf.NotBefore) {
 		return fmt.Errorf("leaf certificate not yet valid (NotBefore=%s, now=%s)", leaf.NotBefore, now)
 	}
-	if now.After(leaf.NotAfter) {
-		return fmt.Errorf("leaf certificate expired (NotAfter=%s, now=%s)", leaf.NotAfter, now)
+	if now.Add(reloadInterval).After(leaf.NotAfter) {
+		return fmt.Errorf("leaf certificate expires within reload interval (NotAfter=%s, now=%s, reload-interval=%s)", leaf.NotAfter, now, reloadInterval)
 	}
 	return nil
 }
 
 func (s *Signer) SignHTTPRequest(req *http.Request, body []byte, now time.Time) error {
 	creds := s.creds.Load()
-	if creds == nil {
-		return errors.New("no signing credentials loaded")
-	}
-	if err := checkLeafValidity(creds.leafCert, now); err != nil {
-		return err
-	}
 	timestamp := strconv.FormatInt(now.Unix(), 10)
 	payload := BuildSigningPayload(timestamp, body)
 	signature := ed25519.Sign(creds.privateKey, payload)

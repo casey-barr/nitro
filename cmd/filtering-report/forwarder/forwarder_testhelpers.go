@@ -25,8 +25,9 @@ type MockExternalEndpoint struct {
 	requestCount atomic.Int64
 }
 
-func NewMockExternalEndpoint(t *testing.T, leaf signertest.LeafOptions) (pemPath string, endpoint *MockExternalEndpoint) {
+func NewMockExternalEndpoint(t *testing.T) (pemPath string, endpoint *MockExternalEndpoint) {
 	t.Helper()
+	leaf := signertest.DefaultLeafOptions(signertest.DefaultTestSAN)
 	pemPath, caPath := signertest.SigningFixture(t, leaf)
 	verifier, err := signertest.NewVerifier(&signertest.VerifierConfig{
 		CARootPEMFile: caPath,
@@ -86,6 +87,7 @@ func NewTestForwarder(t *testing.T, queueClient sqsclient.QueueClient, endpointU
 	t.Helper()
 	signerCfg := signer.DefaultConfig
 	signerCfg.PEMFile = pemPath
+	signerCfg.ReloadInterval = time.Minute
 	config := &Config{
 		Workers:            1,
 		PollInterval:       10 * time.Millisecond,
