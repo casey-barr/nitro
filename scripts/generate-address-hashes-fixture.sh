@@ -11,9 +11,8 @@
 # (mirrors execution/gethexec/addressfilter/hash_store.go: HashWithPrefix /
 # GetHashInputPrefix). The remainder is filler: zero-padded sequential
 # counters formatted as 64-hex strings ({"hash":"0x000...001"}, ...),
-# emitted in parallel by 8 awk workers writing to per-chunk temp files
-# (tmpfs-backed on Linux), then concatenated. ~10-50x faster than the
-# previous /dev/urandom + xxd + sed pipeline.
+# emitted in parallel by 8 awk workers writing to per-chunk temp files,
+# then concatenated.
 #
 # Cross-platform: macOS and Linux.
 
@@ -57,7 +56,7 @@ usage() {
     cat <<EOF
 Usage: $0 [OPTIONS]
 
-Generate a Robinhood-shaped filtered-addresses-hashed-list.json fixture file.
+Generate filtered-addresses-hashed-list.json fixture file.
 
 Options:
   -s, --size SIZE         Target file size, e.g. 4GB, 500MB. Suffix MB or GB
