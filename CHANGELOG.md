@@ -18,6 +18,10 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 - Set default `EnableETHCallFilter` to false.
 
+### Fixed
+
+- Resolve BoLD Staking Bug That Attempts Self-Challenge
+
 ## [v3.10.0](https://github.com/OffchainLabs/nitro/compare/v3.10.0-rc.9...v3.10.0) - 2026-05-05
 
 **Note for v3.10.0:** Please add this option to nodes running v3.10:
