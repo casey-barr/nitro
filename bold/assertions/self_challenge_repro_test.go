@@ -21,8 +21,9 @@ import (
 	"github.com/offchainlabs/nitro/bold/testing/setup"
 )
 
-// TestSelfChallengeBugWhenStateProviderReturnsTransientWrongRoot reproduces the
-// v3.10.0 honest-validator self-challenge bug observed on Arbitrum One.
+// TestSelfChallengeBugWhenStateProviderReturnsTransientWrongRoot is the
+// regression gate for the honest-validator self-challenge bug. It fails if the
+// same-hash short-circuit in maybePostRivalAssertionAndChallenge is removed.
 //
 // Observed symptom in production:
 //   - validator logs "Disagreed with an observed assertion onchain" for a
@@ -30,8 +31,8 @@ import (
 //   - then logs "Rival assertion already exists onchain" with the same hash,
 //   - then "Posted rival assertion to another that we disagreed with" with
 //     detectedAssertionHash == correctRivalAssertionHash,
-//   - then a reverting createLayerZeroEdge tx wrapped by OnlyOwnerDestination
-//     from the validator wallet's allowlist.
+//   - then a reverting createLayerZeroEdge tx wrapped by the validator
+//     wallet's destination allowlist.
 //
 // Root cause modeled here:
 //   - At T1, findCanonicalAssertionBranch asks the state provider for the
@@ -41,16 +42,17 @@ import (
 //   - At T2 (a few hundred ms later in prod), the rival-posting path asks the
 //     same question and gets the correct state — its hash matches Y exactly,
 //     producing sol.ErrAlreadyExists.
-//   - The new post-PR#4615 fall-through in maybePostRivalAssertion treats that
-//     as success and returns the existing assertion. maybePostRivalAssertionAndChallenge
-//     then calls HandleCorrectRival on it without ever checking that the
-//     "rival" hash is identical to the assertion it was about to challenge.
+//   - The ErrAlreadyExists fall-through in maybePostRivalAssertion treats that
+//     as success and returns the existing on-chain assertion. Without the
+//     same-hash short-circuit, maybePostRivalAssertionAndChallenge then calls
+//     HandleCorrectRival on it — which means opening a challenge edge against
+//     a canonical assertion.
 //
-// Expected behavior on master (no fix): the recording rival handler captures
-// exactly one HandleCorrectRival call with Y.AssertionHash, and that hash is
-// identical to args.invalidAssertion.AssertionHash. The final require.Empty
-// below FAILS on master, with a message that names the canonical hash that
-// would have been challenged.
+// Regression gate: the recording rival handler captures every
+// HandleCorrectRival call. The require.Empty at the bottom passes when the
+// same-hash short-circuit is in place (handler never invoked) and fails when
+// the short-circuit is removed (handler invoked with the canonical assertion's
+// own hash, which equals args.invalidAssertion.AssertionHash).
 func TestSelfChallengeBugWhenStateProviderReturnsTransientWrongRoot(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -156,15 +158,16 @@ func TestSelfChallengeBugWhenStateProviderReturnsTransientWrongRoot(t *testing.T
 	// Phase 2: respondToAnyInvalidAssertions sees Y as invalid (parent is
 	// canonical, Y is not) and runs the rival path. The second flaky call
 	// returns the correct state; the chain reports ErrAlreadyExists; the
-	// PR#4615 fall-through returns Y as the "correct rival"; HandleCorrectRival
-	// is invoked on a canonical assertion.
+	// ErrAlreadyExists fall-through in maybePostRivalAssertion returns Y as
+	// the "correct rival"; HandleCorrectRival is invoked on a canonical
+	// assertion unless the same-hash short-circuit catches it.
 	require.NoError(t, manager.respondToAnyInvalidAssertions(ctx, assertions, manager))
 
 	calls := handler.snapshot()
 
-	// Diagnostic logging so the test failure on master is self-documenting:
-	// it should print the exact hash that would have been challenged and the
-	// fact that it equals the supposedly-invalid assertion's hash.
+	// Diagnostic logging so a failure is self-documenting: it should print
+	// the exact hash that would have been challenged and the fact that it
+	// equals the supposedly-invalid assertion's hash.
 	for _, h := range calls {
 		t.Logf(
 			"self-challenge bug fired: HandleCorrectRival(%s); "+
@@ -173,8 +176,8 @@ func TestSelfChallengeBugWhenStateProviderReturnsTransientWrongRoot(t *testing.T
 		)
 	}
 
-	// Regression gate. FAILS on master (bug fires → calls has one entry for Y).
-	// PASSES after the proposed sync.go:441 self-check fix (handler never invoked).
+	// Regression gate: fails if the same-hash short-circuit in
+	// maybePostRivalAssertionAndChallenge is removed.
 	require.Empty(
 		t,
 		calls,

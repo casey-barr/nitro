@@ -4,6 +4,7 @@
 package assertions
 
 import (
+	"context"
 	"math/big"
 	"testing"
 
@@ -113,6 +114,141 @@ func TestRecordAgreedAssertionAllowsOverflowAdvance(t *testing.T) {
 	require.Equal(t, child, m.assertionChainData.latestAgreedAssertion,
 		"overflow child (same InboxMaxCount as parent) must be allowed to advance "+
 			"the chain pointer — a numeric-ordering check would have left catchup stuck")
+}
+
+// TestNoSelfChallengeAfterCursorDowngradeAttempt is an end-to-end regression
+// test that walks the full prod scenario: a slow catchup goroutine attempts
+// to write an ancestor of the current latestAgreedAssertion (the downgrade
+// race), and then a sync chunk arrives carrying a new canonical assertion.
+// Without the parent-link guard in applyRecordAgreedAssertion, the cursor
+// would downgrade, the new assertion would be skipped by
+// findCanonicalAssertionBranch, and respondToAnyInvalidAssertions would fire
+// the rival path against an honest assertion. This test asserts that
+// end-to-end none of that happens.
+//
+// For finer-grained coverage of each fix half in isolation:
+//   - applyRecordAgreedAssertion parent-link guard:
+//     TestRecordAgreedAssertionDoesNotDowngradeLatestAgreedAssertion
+//   - maybePostRivalAssertionAndChallenge same-hash short-circuit:
+//     TestSelfChallengeBugWhenStateProviderReturnsTransientWrongRoot
+func TestNoSelfChallengeAfterCursorDowngradeAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	g := numToAssertionHash(0)
+	a14 := numToAssertionHash(14)
+	a15 := numToAssertionHash(15)
+
+	gInfo := &protocol.AssertionCreatedInfo{
+		AssertionHash: g,
+		InboxMaxCount: big.NewInt(14),
+		AfterState:    numToState(0, t),
+	}
+	a14Info := &protocol.AssertionCreatedInfo{
+		AssertionHash:       a14,
+		ParentAssertionHash: g,
+		InboxMaxCount:       big.NewInt(15),
+		AfterState:          numToState(14, t),
+	}
+	a15Info := &protocol.AssertionCreatedInfo{
+		AssertionHash:       a15,
+		ParentAssertionHash: a14,
+		InboxMaxCount:       big.NewInt(16),
+		AfterState:          numToState(15, t),
+	}
+
+	// State provider agrees with A15 when asked about parent=A14
+	// (parent.InboxMaxCount == 15 is the lookup key in mockStateProvider).
+	provider := &mockStateProvider{
+		agreesWith: map[uint64]*protocol.AssertionCreatedInfo{
+			15: a15Info,
+		},
+	}
+
+	m := &Manager{
+		execProvider:                provider,
+		observedCanonicalAssertions: make(chan protocol.AssertionHash, 16),
+		submittedAssertions: threadsafe.NewLruSet(
+			1024,
+			threadsafe.LruSetWithMetric[protocol.AssertionHash]("submittedAssertions"),
+		),
+		confirming: threadsafe.NewLruSet[protocol.AssertionHash](1024),
+		assertionChainData: &assertionChainData{
+			latestAgreedAssertion: a14,
+			canonicalAssertions: map[protocol.AssertionHash]*protocol.AssertionCreatedInfo{
+				g:   gInfo,
+				a14: a14Info,
+			},
+		},
+	}
+	// Drain the confirmation queue so sendToConfirmationQueue doesn't block.
+	go func() {
+		for {
+			select {
+			case <-m.observedCanonicalAssertions:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Step 1: slow catchup belatedly tries to advance to G (an ancestor of A14).
+	m.applyRecordAgreedAssertion(gInfo)
+
+	// (a) Cursor must NOT move backward — the parent-link guard rejects the
+	// ancestor write. Failure here means applyRecordAgreedAssertion regressed.
+	require.Equal(
+		t,
+		a14,
+		m.assertionChainData.latestAgreedAssertion,
+		"cursor downgraded from A14 to ancestor G — applyRecordAgreedAssertion parent-link guard regressed",
+	)
+
+	// Step 2: a sync chunk arrives carrying A15 (canonical child of A14). With
+	// cursor still at A14, findCanonicalAssertionBranch's cursor matches
+	// A15's parent and the agreement check fires.
+	chunk := []assertionAndParentCreationInfo{
+		{parent: a14Info, assertion: a15Info},
+	}
+	require.NoError(t, m.findCanonicalAssertionBranch(ctx, chunk))
+
+	// (b) A15 must be in canonicalAssertions. A regressed cursor would have
+	// caused findCanonicalAssertionBranch to skip A15 entirely.
+	_, hasA15 := m.assertionChainData.canonicalAssertions[a15]
+	require.True(
+		t,
+		hasA15,
+		"A15 not added to canonicalAssertions — findCanonicalAssertionBranch skipped it, "+
+			"implying the cursor was downgraded by the catchup write",
+	)
+
+	// Step 3: respondToAnyInvalidAssertions runs on the same chunk. Because
+	// A15 is now canonical, the "canonical parent, non-canonical self" branch
+	// does not fire and no rival is posted.
+	poster := &recordingMockRivalPoster{}
+	require.NoError(t, m.respondToAnyInvalidAssertions(ctx, chunk, poster))
+
+	// (c) Zero rival-path invocations — the spurious self-challenge that
+	// drove the prod alert never fires when both fixes are in place.
+	require.Empty(
+		t,
+		poster.calls,
+		"rival path fired against a canonical assertion — this is the full integrated regression",
+	)
+}
+
+// recordingMockRivalPoster captures every maybePostRivalAssertionAndChallenge
+// invocation. Returns nil so the caller treats the call as a no-op.
+type recordingMockRivalPoster struct {
+	calls []protocol.AssertionHash
+}
+
+func (r *recordingMockRivalPoster) maybePostRivalAssertionAndChallenge(
+	_ context.Context,
+	args rivalPosterArgs,
+) (*protocol.AssertionCreatedInfo, error) {
+	r.calls = append(r.calls, args.invalidAssertion.AssertionHash)
+	return nil, nil
 }
 
 // managerWithCanonical builds a Manager with only the fields recordAgreedAssertion
