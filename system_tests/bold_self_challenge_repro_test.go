@@ -45,51 +45,20 @@ import (
 )
 
 // TestBoldSelfChallengeRepro is the system-level regression gate for the
-// same-hash short-circuit in maybePostRivalAssertionAndChallenge. It exercises
-// the rival path through challenge.NewChallengeStack with a real L1 + L2 +
-// BoLD rollup stack. Note this test does NOT exercise the cursor-downgrade
-// path in applyRecordAgreedAssertion (the test seeds latestAgreedAssertion at
-// genesis and it never moves) — see TestRecordAgreedAssertionDoesNotDowngradeLatestAgreedAssertion
-// for that side of the fix.
+// same-hash short-circuit in maybePostRivalAssertionAndChallenge. It posts
+// one canonical child Y on-chain, then runs a full challenge.Stack with a
+// flaky ExecutionProvider that returns a wrong EndHistoryRoot on the first
+// call for Y's batch — the prod state-provider race.
 //
-// The test posts one canonical child assertion Y on-chain, then starts a
-// challenge.Stack whose ExecutionProvider is wrapped to return a
-// transient-wrong EndHistoryRoot on the first call for Y's batch — the
-// non-deterministic state-provider race observed in production.
+// The bug's signature is HandleCorrectRival being invoked with Y's own hash
+// (matching the production log "correctRivalAssertionHash == detectedAssertionHash").
+// Detection is a recording wrapper around the challenge manager's
+// HandleCorrectRival. The require.Empty at the bottom passes when the
+// short-circuit is in place, fails when it is removed.
 //
-// The detection mechanism is a thin recording wrapper around the rival
-// handler: after challenge.NewChallengeStack wires the challenge manager into
-// the assertion manager as the RivalHandler, the test reinstalls a wrapping
-// handler that records every HandleCorrectRival(hash) call before delegating
-// to the real challenge manager. The bug's signature is that this method is
-// invoked with the canonical assertion Y's own hash — the validator's
-// "correct rival" being byte-identical to the assertion it just declared
-// invalid. That is exactly what the production log line
-// "correctRivalAssertionHash == detectedAssertionHash" is reporting.
-//
-// Without the same-hash short-circuit the validator's sync loop produces the
-// full prod log chain:
-//
-//	WARN  Disagreed with an observed assertion onchain  detectedAssertionHash=Y
-//	INFO  Rival assertion already exists onchain        assertionHash=Y
-//	INFO  Posted rival assertion to another that we disagreed with
-//	        correctRivalAssertionHash=Y                  ← equals detectedAssertionHash
-//	ERROR could not add block challenge level zero edge …  execution reverted
-//
-// The reverting tx at the bottom of the chain is the on-chain manifestation.
-// In prod that revert came from the validator wallet's destination allowlist
-// (OnlyOwnerDestination, defined in contracts/src/rollup/ValidatorWallet.sol).
-// In this test harness the revert comes from the challenge manager itself
-// (AssertionNoSibling, defined in contracts/src/challengeV2/libraries/ChallengeErrors.sol)
-// since the canonical assertion has no rival. Either revert confirms the
-// validator just tried to challenge a canonical assertion — that is the
-// stake-threatening bug we are reproducing.
-//
-// Regression gate: the recording handler must remain empty when the same-hash
-// short-circuit in maybePostRivalAssertionAndChallenge is in place. If the
-// short-circuit is removed, the handler captures one or more calls whose hash
-// equals Y's and the require.Empty assertion fails with a diagnostic naming
-// the canonical hash.
+// Note: this test does not exercise the cursor-downgrade path in
+// applyRecordAgreedAssertion — see TestRecordAgreedAssertionDoesNotDowngradeLatestAgreedAssertion
+// for that side.
 func TestBoldSelfChallengeRepro(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -98,8 +67,7 @@ func TestBoldSelfChallengeRepro(t *testing.T) {
 	defer requireClose(t, repro.l1stack)
 	defer repro.l2node.StopAndWait()
 
-	// Post two batches so we have enough material for an assertion past genesis,
-	// and grant the sequencer batch-poster rights on the inbox.
+	// Grant sequencer batch-poster rights and post two batches.
 	sequencerTxOpts := repro.l1info.GetDefaultTransactOpts("Sequencer", ctx)
 	seqInbox := repro.l1info.GetAddress("SequencerInbox")
 	seqInboxBinding, err := bridgegen.NewSequencerInbox(seqInbox, repro.l1client)
@@ -132,9 +100,8 @@ func TestBoldSelfChallengeRepro(t *testing.T) {
 		return lastInfo.GlobalState.Batch >= totalBatches
 	})
 
-	// Post one canonical child Y on-chain via the real state provider, using
-	// the configured asserter account. This is the assertion the validator's
-	// flaky-wrapped sync loop will later see and erroneously flag as invalid.
+	// Post canonical child Y on-chain; this is what the flaky-wrapped sync
+	// loop will later misclassify as invalid.
 	genesisHash, err := repro.assertionChain.GenesisAssertionHash(ctx)
 	Require(t, err)
 	genesisInfo, err := repro.assertionChain.ReadAssertionCreationInfo(ctx, protocol.AssertionHash{Hash: genesisHash})
@@ -149,14 +116,12 @@ func TestBoldSelfChallengeRepro(t *testing.T) {
 	yHash := yAssertion.Id()
 	t.Logf("posted canonical child Y on-chain: %s", yHash)
 
-	// Wrap the real state provider so the FIRST call to
-	// ExecutionStateAfterPreviousState for Y's batch returns a state with a
-	// wrong EndHistoryRoot; subsequent calls return the truth. This is the
-	// minimal model of the prod race in [staker/bold/bold_state_provider.go].
+	// Flaky provider: wrong EndHistoryRoot on first call for Y's batch,
+	// real provider thereafter. Models the prod state-provider race.
 	flaky := newFlakySystemExecutionProvider(repro.stateManager, genesisInfo.InboxMaxCount.Uint64())
 
-	// Build a HistoryCommitmentProvider where ONLY the ExecutionProvider role
-	// (5th arg) is wrapped — everything else uses the real provider.
+	// Only the ExecutionProvider slot is wrapped; the other roles use the
+	// unwrapped provider.
 	provider := state.NewHistoryCommitmentProvider(
 		repro.stateManager,
 		repro.stateManager,
@@ -166,11 +131,8 @@ func TestBoldSelfChallengeRepro(t *testing.T) {
 		nil,
 	)
 
-	// Build the assertion manager manually with posting disabled. The poster
-	// would otherwise fire ExecutionStateAfterParent immediately at startup —
-	// from the same (genesis-parent, maxInboxCount=1) cell that sync's
-	// findCanonicalAssertionBranch evaluates Y under — and consume the flaky
-	// provider's first-fire trigger before sync gets to it.
+	// Posting disabled so the poster doesn't consume flaky's first-fire
+	// trigger before findCanonicalAssertionBranch sees it.
 	asm, err := assertions.NewManager(
 		repro.assertionChain,
 		provider,
@@ -217,44 +179,26 @@ poll:
 		}
 		select {
 		case <-ctx.Done():
-			// Labeled break required: a bare break inside select exits the
-			// select, not the for, and the loop would spin until deadline
-			// after ctx cancellation.
-			break poll
+			break poll // labeled: bare break exits only the select
 		case <-ticker.C:
 		}
 	}
 
 	calls := recorder.snapshot()
 	for _, h := range calls {
-		t.Logf(
-			"self-challenge bug fired end-to-end: HandleCorrectRival(%s); "+
-				"args.invalidAssertion.AssertionHash=%s (equal=%v)",
-			h, yHash, h == yHash,
-		)
+		t.Logf("HandleCorrectRival(%s); invalidAssertion=%s (equal=%v)",
+			h, yHash, h == yHash)
 	}
 
-	// Regression gate: fails if the same-hash short-circuit in
-	// maybePostRivalAssertionAndChallenge is removed.
-	require.Empty(
-		t,
-		calls,
-		"self-challenge bug reproduced end-to-end: the challenge manager's "+
-			"HandleCorrectRival was invoked when it should have been short-circuited. "+
-			"The supposedly-invalid assertion %s has the same hash as the 'correct rival' "+
-			"the validator computed, so the rival path is trying to challenge a canonical "+
-			"assertion against itself. Captured calls: %v",
-		yHash,
-		calls,
-	)
+	// Regression gate: fails if the same-hash short-circuit is removed.
+	require.Empty(t, calls,
+		"self-challenge bug reproduced: HandleCorrectRival invoked on canonical assertion %s; captured calls=%v",
+		yHash, calls)
 }
 
-// recordingRivalHandler captures every HandleCorrectRival call before
-// delegating to a wrapped handler. The wrapped handler is the real
-// challenge.Manager — calls keep flowing through it so the test exercises the
-// full production code path (createLayerZeroEdge attempt, on-chain revert),
-// but the recorder gives the test a direct, fast, hash-level assertion target
-// without needing to scrape logs.
+// recordingRivalHandler records every HandleCorrectRival call before
+// delegating to the real challenge manager. Lets us assert at the hash level
+// without scraping logs while still exercising the production code path.
 type recordingRivalHandler struct {
 	inner modes.RivalHandler
 
@@ -282,14 +226,9 @@ func (r *recordingRivalHandler) snapshot() []protocol.AssertionHash {
 
 var _ modes.RivalHandler = (*recordingRivalHandler)(nil)
 
-// flakySystemExecutionProvider mirrors the wrapper used by the unit test in
-// bold/assertions/self_challenge_repro_test.go but lives in the system_tests
-// package so the test is self-contained.
-//
-// On the first call to ExecutionStateAfterPreviousState matching the target
-// maxInboxCount, it delegates to the inner provider, then replaces the returned
-// EndHistoryRoot with a deterministic-but-wrong value before returning. Every
-// subsequent call delegates unchanged.
+// flakySystemExecutionProvider returns a wrong EndHistoryRoot on the first
+// call for targetInboxCount, then delegates unchanged. Self-contained
+// system-test copy of the unit-test wrapper.
 type flakySystemExecutionProvider struct {
 	inner            state.ExecutionProvider
 	targetInboxCount uint64
@@ -327,9 +266,7 @@ func (f *flakySystemExecutionProvider) ExecutionStateAfterPreviousState(
 
 var _ state.ExecutionProvider = (*flakySystemExecutionProvider)(nil)
 
-// reproRig bundles everything the test needs from the L1+L2 setup, including
-// the real BOLDStateProvider, the real AssertionChain, and the validator. The
-// fields are unexported because nothing outside this file uses them.
+// reproRig bundles what the test needs from the L1+L2 setup.
 type reproRig struct {
 	l1stack                  *node.Node
 	l1client                 *ethclient.Client

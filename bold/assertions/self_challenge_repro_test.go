@@ -22,37 +22,14 @@ import (
 )
 
 // TestSelfChallengeBugWhenStateProviderReturnsTransientWrongRoot is the
-// regression gate for the honest-validator self-challenge bug. It fails if the
-// same-hash short-circuit in maybePostRivalAssertionAndChallenge is removed.
-//
-// Observed symptom in production:
-//   - validator logs "Disagreed with an observed assertion onchain" for a
-//     canonical on-chain assertion Y (no rival exists on chain),
-//   - then logs "Rival assertion already exists onchain" with the same hash,
-//   - then "Posted rival assertion to another that we disagreed with" with
-//     detectedAssertionHash == correctRivalAssertionHash,
-//   - then a reverting createLayerZeroEdge tx wrapped by the validator
-//     wallet's destination allowlist.
-//
-// Root cause modeled here:
-//   - At T1, findCanonicalAssertionBranch asks the state provider for the
-//     expected state after Y's parent and the provider returns a state whose
-//     EndHistoryRoot is wrong, with no ErrChainCatchingUp. Y is therefore not
-//     added to canonicalAssertions.
-//   - At T2 (a few hundred ms later in prod), the rival-posting path asks the
-//     same question and gets the correct state — its hash matches Y exactly,
-//     producing sol.ErrAlreadyExists.
-//   - The ErrAlreadyExists fall-through in maybePostRivalAssertion treats that
-//     as success and returns the existing on-chain assertion. Without the
-//     same-hash short-circuit, maybePostRivalAssertionAndChallenge then calls
-//     HandleCorrectRival on it — which means opening a challenge edge against
-//     a canonical assertion.
-//
-// Regression gate: the recording rival handler captures every
-// HandleCorrectRival call. The require.Empty at the bottom passes when the
-// same-hash short-circuit is in place (handler never invoked) and fails when
-// the short-circuit is removed (handler invoked with the canonical assertion's
-// own hash, which equals args.invalidAssertion.AssertionHash).
+// regression gate for the same-hash short-circuit in
+// maybePostRivalAssertionAndChallenge. A flaky ExecutionProvider returns a
+// wrong EndHistoryRoot on the first call for Y's batch, so
+// findCanonicalAssertionBranch disagrees and the rival path fires.
+// maybePostRivalAssertion's ErrAlreadyExists fall-through hands Y back as
+// the "correct rival"; without the short-circuit HandleCorrectRival would
+// then be invoked on the canonical assertion. Passes when the short-circuit
+// is in place, fails when removed.
 func TestSelfChallengeBugWhenStateProviderReturnsTransientWrongRoot(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -155,19 +132,13 @@ func TestSelfChallengeBugWhenStateProviderReturnsTransientWrongRoot(t *testing.T
 		"findCanonicalAssertionBranch should make exactly one ExecutionStateAfterPreviousState call for Y",
 	)
 
-	// Phase 2: respondToAnyInvalidAssertions sees Y as invalid (parent is
-	// canonical, Y is not) and runs the rival path. The second flaky call
-	// returns the correct state; the chain reports ErrAlreadyExists; the
-	// ErrAlreadyExists fall-through in maybePostRivalAssertion returns Y as
-	// the "correct rival"; HandleCorrectRival is invoked on a canonical
-	// assertion unless the same-hash short-circuit catches it.
+	// Phase 2: rival path fires; without the short-circuit HandleCorrectRival
+	// is invoked on the canonical assertion.
 	require.NoError(t, manager.respondToAnyInvalidAssertions(ctx, assertions, manager))
 
 	calls := handler.snapshot()
 
-	// Diagnostic logging so a failure is self-documenting: it should print
-	// the exact hash that would have been challenged and the fact that it
-	// equals the supposedly-invalid assertion's hash.
+	// Diagnostic log so a failure names the hash that would have been challenged.
 	for _, h := range calls {
 		t.Logf(
 			"self-challenge bug fired: HandleCorrectRival(%s); "+

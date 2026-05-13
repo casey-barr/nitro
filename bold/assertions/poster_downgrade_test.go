@@ -14,20 +14,11 @@ import (
 	"github.com/offchainlabs/nitro/bold/protocol"
 )
 
-// TestRecordAgreedAssertionDoesNotDowngradeLatestAgreedAssertion pins the
-// structural invariant that fixes the prod "honest validator self-challenge"
-// incident: latestAgreedAssertion must never move backward, even when the
-// catchup goroutine writes an assertion that is an ancestor of (rather than a
-// direct child of) the current value.
-//
-// Failure mode this test guards against: sync advances latestAgreedAssertion
-// to A2; the slow RPC-bound catchup loop later finishes its write for A1
-// (which is A2's ancestor). An unconditional advance would set
-// latestAgreedAssertion back to A1, causing the next sync chunk to start its
-// agreement-cursor at A1 instead of A2 and therefore skip the agreement check
-// for any assertion whose parent is A2. Skipped assertions hit
-// respondToAnyInvalidAssertions' "canonical parent, non-canonical self" branch
-// and trigger a self-challenge against our own canonical assertion.
+// TestRecordAgreedAssertionDoesNotDowngradeLatestAgreedAssertion verifies the
+// parent-link guard: a slow catchup write for an ancestor of the current
+// latestAgreedAssertion must not downgrade the cursor. Without the guard,
+// the next sync chunk would skip assertions whose parent is the previous
+// (newer) cursor value and self-challenge them.
 func TestRecordAgreedAssertionDoesNotDowngradeLatestAgreedAssertion(t *testing.T) {
 	a0 := protocol.AssertionHash{Hash: hashFromString("A0")}
 	a1 := protocol.AssertionHash{Hash: hashFromString("A1")}
@@ -59,10 +50,9 @@ func TestRecordAgreedAssertionDoesNotDowngradeLatestAgreedAssertion(t *testing.T
 	require.True(t, m.submittedAssertions.Has(a1), "A1 must be tracked in submittedAssertions")
 }
 
-// TestRecordAgreedAssertionAdvancesOnDirectChild pins the positive side of the
-// invariant: when the supplied assertion IS a direct child of the current
-// latestAgreedAssertion, the advance must succeed. Without this, the catchup
-// loop can't make progress.
+// TestRecordAgreedAssertionAdvancesOnDirectChild verifies the happy path: a
+// direct child of the current cursor advances it forward. Without this the
+// catchup loop can't make progress.
 func TestRecordAgreedAssertionAdvancesOnDirectChild(t *testing.T) {
 	a0 := protocol.AssertionHash{Hash: hashFromString("A0")}
 	a1 := protocol.AssertionHash{Hash: hashFromString("A1")}
@@ -80,17 +70,10 @@ func TestRecordAgreedAssertionAdvancesOnDirectChild(t *testing.T) {
 	require.True(t, hasA1)
 }
 
-// TestRecordAgreedAssertionAllowsOverflowAdvance pins the choice of parent-hash
-// linkage (not numeric ordering on InboxMaxCount) for the advance check.
-//
-// Overflow assertions are created when the machine stops mid-batch because it
-// hit the per-assertion block-height cap before consuming the next inbox
-// position. Their InboxMaxCount equals their parent's. A numeric check like
-// "child.InboxMaxCount > parent.InboxMaxCount" would refuse the advance and
-// pin catchup at the overflow parent forever, never making progress.
-//
-// This test would FAIL under a numeric implementation and PASSES under the
-// parent-hash implementation.
+// TestRecordAgreedAssertionAllowsOverflowAdvance pins parent-hash linkage
+// (not numeric InboxMaxCount ordering) as the advance check. Overflow
+// assertions share InboxMaxCount with their parent, so a numeric check
+// would pin catchup at the overflow parent forever.
 func TestRecordAgreedAssertionAllowsOverflowAdvance(t *testing.T) {
 	parent := protocol.AssertionHash{Hash: hashFromString("parent")}
 	child := protocol.AssertionHash{Hash: hashFromString("child-overflow")}
@@ -116,21 +99,12 @@ func TestRecordAgreedAssertionAllowsOverflowAdvance(t *testing.T) {
 			"the chain pointer — a numeric-ordering check would have left catchup stuck")
 }
 
-// TestNoSelfChallengeAfterCursorDowngradeAttempt is an end-to-end regression
-// test that walks the full prod scenario: a slow catchup goroutine attempts
-// to write an ancestor of the current latestAgreedAssertion (the downgrade
-// race), and then a sync chunk arrives carrying a new canonical assertion.
-// Without the parent-link guard in applyRecordAgreedAssertion, the cursor
-// would downgrade, the new assertion would be skipped by
-// findCanonicalAssertionBranch, and respondToAnyInvalidAssertions would fire
-// the rival path against an honest assertion. This test asserts that
-// end-to-end none of that happens.
-//
-// For finer-grained coverage of each fix half in isolation:
-//   - applyRecordAgreedAssertion parent-link guard:
-//     TestRecordAgreedAssertionDoesNotDowngradeLatestAgreedAssertion
-//   - maybePostRivalAssertionAndChallenge same-hash short-circuit:
-//     TestSelfChallengeBugWhenStateProviderReturnsTransientWrongRoot
+// TestNoSelfChallengeAfterCursorDowngradeAttempt walks the full prod scenario
+// end-to-end: a slow catchup writes an ancestor, then a sync chunk arrives
+// with a new canonical assertion. Asserts cursor stability, downstream
+// classification, and absence of spurious rivals. For finer-grained coverage
+// of each fix in isolation see TestRecordAgreedAssertion* and
+// TestSelfChallengeBugWhenStateProviderReturnsTransientWrongRoot.
 func TestNoSelfChallengeAfterCursorDowngradeAttempt(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -157,8 +131,7 @@ func TestNoSelfChallengeAfterCursorDowngradeAttempt(t *testing.T) {
 		AfterState:          numToState(15, t),
 	}
 
-	// State provider agrees with A15 when asked about parent=A14
-	// (parent.InboxMaxCount == 15 is the lookup key in mockStateProvider).
+	// mockStateProvider keys on parent.InboxMaxCount; A14's value is 15.
 	provider := &mockStateProvider{
 		agreesWith: map[uint64]*protocol.AssertionCreatedInfo{
 			15: a15Info,
@@ -192,49 +165,25 @@ func TestNoSelfChallengeAfterCursorDowngradeAttempt(t *testing.T) {
 		}
 	}()
 
-	// Step 1: slow catchup belatedly tries to advance to G (an ancestor of A14).
+	// Slow catchup tries to advance to G (ancestor of A14).
 	m.applyRecordAgreedAssertion(gInfo)
+	require.Equal(t, a14, m.assertionChainData.latestAgreedAssertion,
+		"cursor downgraded to ancestor — parent-link guard regressed")
 
-	// (a) Cursor must NOT move backward — the parent-link guard rejects the
-	// ancestor write. Failure here means applyRecordAgreedAssertion regressed.
-	require.Equal(
-		t,
-		a14,
-		m.assertionChainData.latestAgreedAssertion,
-		"cursor downgraded from A14 to ancestor G — applyRecordAgreedAssertion parent-link guard regressed",
-	)
-
-	// Step 2: a sync chunk arrives carrying A15 (canonical child of A14). With
-	// cursor still at A14, findCanonicalAssertionBranch's cursor matches
-	// A15's parent and the agreement check fires.
+	// Sync chunk carrying A15. findCanonicalAssertionBranch should classify
+	// it as canonical because the cursor is still A14.
 	chunk := []assertionAndParentCreationInfo{
 		{parent: a14Info, assertion: a15Info},
 	}
 	require.NoError(t, m.findCanonicalAssertionBranch(ctx, chunk))
-
-	// (b) A15 must be in canonicalAssertions. A regressed cursor would have
-	// caused findCanonicalAssertionBranch to skip A15 entirely.
 	_, hasA15 := m.assertionChainData.canonicalAssertions[a15]
-	require.True(
-		t,
-		hasA15,
-		"A15 not added to canonicalAssertions — findCanonicalAssertionBranch skipped it, "+
-			"implying the cursor was downgraded by the catchup write",
-	)
+	require.True(t, hasA15, "A15 skipped — cursor was downgraded")
 
-	// Step 3: respondToAnyInvalidAssertions runs on the same chunk. Because
-	// A15 is now canonical, the "canonical parent, non-canonical self" branch
-	// does not fire and no rival is posted.
+	// respondToAnyInvalidAssertions must not fire on A15.
 	poster := &recordingMockRivalPoster{}
 	require.NoError(t, m.respondToAnyInvalidAssertions(ctx, chunk, poster))
-
-	// (c) Zero rival-path invocations — the spurious self-challenge that
-	// drove the prod alert never fires when both fixes are in place.
-	require.Empty(
-		t,
-		poster.calls,
-		"rival path fired against a canonical assertion — this is the full integrated regression",
-	)
+	require.Empty(t, poster.calls,
+		"rival path fired against a canonical assertion")
 }
 
 // recordingMockRivalPoster captures every maybePostRivalAssertionAndChallenge
