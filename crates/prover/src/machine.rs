@@ -32,6 +32,7 @@ use wasmparser::{DataKind, ElementItems, ElementKind, Operator, RefType, TableTy
 use {
     crate::{
         kzg::prove_kzg_preimage,
+        programs::meter::MeteredMachine,
         reinterpret::{ReinterpretAsSigned, ReinterpretAsUnsigned},
         value::IntegerValType,
         wavm::{IBinOpType, IRelOpType, IUnOpType, unpack_cross_module_call},
