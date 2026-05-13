@@ -112,6 +112,19 @@ func (m *Manager) applyRecordAgreedAssertion(creationInfo *protocol.AssertionCre
 	m.assertionChainData.canonicalAssertions[creationInfo.AssertionHash] = creationInfo
 	if creationInfo.ParentAssertionHash == m.assertionChainData.latestAgreedAssertion {
 		m.assertionChainData.latestAgreedAssertion = creationInfo.AssertionHash
+	} else {
+		// Skip path: a slow catchup write landed after sync already advanced
+		// the cursor past this assertion (or wrote a fork). The cursor stays
+		// put — that's the fix — but we surface a signal so the silent skip
+		// isn't indistinguishable from "validator stuck for some other reason."
+		assertionPointerSkipNonChildCounter.Inc(1)
+		log.Debug(
+			"applyRecordAgreedAssertion: not advancing latestAgreedAssertion because supplied assertion is not its direct child",
+			"assertionHash", creationInfo.AssertionHash,
+			"parentAssertionHash", creationInfo.ParentAssertionHash,
+			"latestAgreedAssertion", m.assertionChainData.latestAgreedAssertion,
+			"validatorName", m.validatorName,
+		)
 	}
 	m.submittedAssertions.Insert(creationInfo.AssertionHash)
 }

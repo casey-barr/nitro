@@ -452,6 +452,7 @@ func (m *Manager) maybePostRivalAssertionAndChallenge(
 	// against a canonical assertion. Returning the assertion lets the caller
 	// add it to canonicalAssertions so the loop self-heals next sync.
 	if freshRival.AssertionHash == args.invalidAssertion.AssertionHash {
+		selfChallengeBailoutCounter.Inc(1)
 		log.Warn(
 			"Computed correct rival has the same hash as the detected invalid assertion; "+
 				"skipping challenge to avoid challenging a canonical assertion",

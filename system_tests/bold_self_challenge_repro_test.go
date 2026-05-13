@@ -44,24 +44,31 @@ import (
 	"github.com/offchainlabs/nitro/validator/valnode"
 )
 
-// TestBoldSelfChallengeRepro is the system-level analogue of
-// bold/assertions/self_challenge_repro_test.go. It stands up a real L1 + L2 +
-// BoLD rollup stack, posts one canonical child assertion Y on-chain, then runs
-// a full challenge.Stack whose ExecutionProvider is wrapped to return a
-// transient-wrong EndHistoryRoot on the first call for Y's batch — exactly the
+// TestBoldSelfChallengeRepro is the system-level regression gate for the
+// same-hash short-circuit in maybePostRivalAssertionAndChallenge. It exercises
+// the rival path through challenge.NewChallengeStack with a real L1 + L2 +
+// BoLD rollup stack. Note this test does NOT exercise the cursor-downgrade
+// path in applyRecordAgreedAssertion (the test seeds latestAgreedAssertion at
+// genesis and it never moves) — see TestRecordAgreedAssertionDoesNotDowngradeLatestAgreedAssertion
+// for that side of the fix.
+//
+// The test posts one canonical child assertion Y on-chain, then starts a
+// challenge.Stack whose ExecutionProvider is wrapped to return a
+// transient-wrong EndHistoryRoot on the first call for Y's batch — the
 // non-deterministic state-provider race observed in production.
 //
-// The detection mechanism is a thin recording wrapper around the rival handler:
-// after challenge.NewChallengeStack wires the challenge manager into the
-// assertion manager as the RivalHandler, the test reinstalls a wrapping
+// The detection mechanism is a thin recording wrapper around the rival
+// handler: after challenge.NewChallengeStack wires the challenge manager into
+// the assertion manager as the RivalHandler, the test reinstalls a wrapping
 // handler that records every HandleCorrectRival(hash) call before delegating
 // to the real challenge manager. The bug's signature is that this method is
-// invoked with the canonical assertion Y's own hash — the validator's "correct
-// rival" being byte-identical to the assertion it just declared invalid. That
-// is exactly what the production log line "correctRivalAssertionHash == detectedAssertionHash"
-// is reporting.
+// invoked with the canonical assertion Y's own hash — the validator's
+// "correct rival" being byte-identical to the assertion it just declared
+// invalid. That is exactly what the production log line
+// "correctRivalAssertionHash == detectedAssertionHash" is reporting.
 //
-// On master the validator's sync loop runs the full prod log chain:
+// Without the same-hash short-circuit the validator's sync loop produces the
+// full prod log chain:
 //
 //	WARN  Disagreed with an observed assertion onchain  detectedAssertionHash=Y
 //	INFO  Rival assertion already exists onchain        assertionHash=Y
@@ -69,20 +76,20 @@ import (
 //	        correctRivalAssertionHash=Y                  ← equals detectedAssertionHash
 //	ERROR could not add block challenge level zero edge …  execution reverted
 //
-// The reverting tx at the bottom of the chain is the on-chain manifestation
-// (in prod, OnlyOwnerDestination from the validator wallet's whitelist; in
-// this test harness, AssertionNoSibling() from the challenge manager itself
-// since the canonical assertion has no rival). Either revert confirms that
-// the validator just tried to challenge a canonical assertion — that is the
+// The reverting tx at the bottom of the chain is the on-chain manifestation.
+// In prod that revert came from the validator wallet's destination allowlist
+// (OnlyOwnerDestination, defined in contracts/src/rollup/ValidatorWallet.sol).
+// In this test harness the revert comes from the challenge manager itself
+// (AssertionNoSibling, defined in contracts/src/challengeV2/libraries/ChallengeErrors.sol)
+// since the canonical assertion has no rival. Either revert confirms the
+// validator just tried to challenge a canonical assertion — that is the
 // stake-threatening bug we are reproducing.
 //
-// Expected on master: the recording handler captures one or more calls whose
-// hash equals Y's, and the require.Empty assertion at the bottom FAILS, with a
-// diagnostic message that names the canonical hash and the inappropriate
-// invocation. Expected after the sync.go:441 self-check fix: the rival path
-// detects the same-hash condition and bails before HandleCorrectRival is
-// invoked. The recorder stays empty, the require.Empty assertion passes, and
-// the test goes green — this is the regression gate for the system path.
+// Regression gate: the recording handler must remain empty when the same-hash
+// short-circuit in maybePostRivalAssertionAndChallenge is in place. If the
+// short-circuit is removed, the handler captures one or more calls whose hash
+// equals Y's and the require.Empty assertion fails with a diagnostic naming
+// the canonical hash.
 func TestBoldSelfChallengeRepro(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -203,13 +210,17 @@ func TestBoldSelfChallengeRepro(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Minute)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+poll:
 	for time.Now().Before(deadline) {
 		if len(recorder.snapshot()) > 0 {
-			break
+			break poll
 		}
 		select {
 		case <-ctx.Done():
-			break
+			// Labeled break required: a bare break inside select exits the
+			// select, not the for, and the loop would spin until deadline
+			// after ctx cancellation.
+			break poll
 		case <-ticker.C:
 		}
 	}
@@ -223,11 +234,8 @@ func TestBoldSelfChallengeRepro(t *testing.T) {
 		)
 	}
 
-	// Regression gate. With the bug present the recorder captures one or more
-	// invocations whose hash equals Y's, and require.Empty fails with the
-	// diagnostic above. With the proposed sync.go:441 self-check fix the rival
-	// path bails before HandleCorrectRival is ever called, the recorder stays
-	// empty, and the test goes green.
+	// Regression gate: fails if the same-hash short-circuit in
+	// maybePostRivalAssertionAndChallenge is removed.
 	require.Empty(
 		t,
 		calls,
