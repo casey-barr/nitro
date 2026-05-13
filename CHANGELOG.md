@@ -18,6 +18,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 - Set default `EnableETHCallFilter` to false.
 - Update address-filter S3 hash list format
+- Ensure genesis block is appropriately validated
 
 ### Fixed
 
