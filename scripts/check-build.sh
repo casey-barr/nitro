@@ -189,8 +189,6 @@ else
 fi
 
 # Check Foundry / forge installation and version compatibility
-# Newer forge versions (> 1.0.0) use solar instead of solc for Yul compilation,
-# which causes `make build` to fail.
 if ! command_exists foundryup; then
     echo -e "${RED}Foundry is not installed.${NC}"
     EXIT_CODE=1
