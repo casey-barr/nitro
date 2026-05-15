@@ -17,9 +17,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/pflag"
 
 	"github.com/ethereum/go-ethereum/arbitrum"
+	"github.com/ethereum/go-ethereum/arbitrum/filter"
 	"github.com/ethereum/go-ethereum/arbitrum_types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -430,6 +432,8 @@ type Sequencer struct {
 
 	eventFilter          *eventfilter.EventFilter
 	addressFilterService *addressfilter.FilterService
+
+	pendingFilteredTxReports []addressfilter.FilteredTxReport
 }
 
 func NewSequencer(
@@ -482,6 +486,35 @@ func (s *Sequencer) FilteringReady() bool {
 		return true
 	}
 	return !s.addressFilterService.GetLoadedAt().IsZero()
+}
+
+func (s *Sequencer) buildFilteredTxReport(tx *types.Transaction, header *types.Header, filteredAddresses []filter.FilteredAddressRecord, positionInBlock int) {
+	if s.execEngine.filteringReportRPCClient == nil {
+		return
+	}
+	txRLP, err := tx.MarshalBinary()
+	if err != nil {
+		// MarshalBinary should essentially never fail for a well-formed transaction already
+		// in memory. We log instead of returning an error so that the caller can return a
+		// plain ErrArbTxFilter, avoiding exposure of internal operation errors (e.g.
+		// marshalling failures) to end users.
+		log.Error("failed to marshal transaction for filtered tx report", "err", err, "txHash", tx.Hash())
+		return
+	}
+	report := addressfilter.FilteredTxReport{
+		ID:                uuid.Must(uuid.NewV7()).String(),
+		TxHash:            tx.Hash(),
+		TxRLP:             txRLP,
+		FilteredAddresses: filteredAddresses,
+		ChainID:           s.execEngine.bc.Config().ChainID.Uint64(),
+		BlockNumber:       header.Number.Uint64(),
+		ParentBlockHash:   header.ParentHash,
+		PositionInBlock:   uint64(positionInBlock), // #nosec G115
+		FilteredAt:        time.Now().UTC(),
+		IsDelayed:         false,
+		DelayedReportData: nil,
+	}
+	s.pendingFilteredTxReports = append(s.pendingFilteredTxReports, report)
 }
 
 func (s *Sequencer) onNonceFailureEvict(_ addressAndNonce, failure *nonceFailure) {
@@ -703,7 +736,7 @@ func (s *Sequencer) publishTransactionToQueue(queueCtx context.Context, tx *type
 	return nil
 }
 
-func (s *Sequencer) preTxFilter(_ *params.ChainConfig, header *types.Header, statedb *state.StateDB, _ *arbosState.ArbosState, tx *types.Transaction, options *arbitrum_types.ConditionalOptions, sender common.Address, l1Info *arbos.L1Info, _ int) error {
+func (s *Sequencer) preTxFilter(_ *params.ChainConfig, header *types.Header, statedb *state.StateDB, _ *arbosState.ArbosState, tx *types.Transaction, options *arbitrum_types.ConditionalOptions, sender common.Address, l1Info *arbos.L1Info, positionInBlock int) error {
 	if s.nonceCache.Caching() {
 		stateNonce := s.nonceCache.Get(header, statedb, sender)
 		err := MakeNonceError(sender, tx.Nonce(), stateNonce)
@@ -722,14 +755,19 @@ func (s *Sequencer) preTxFilter(_ *params.ChainConfig, header *types.Header, sta
 	}
 
 	touchAddresses(statedb, tx, sender)
-	addressFiltered, _ := statedb.IsAddressFiltered()
-	if statedb.IsTxFiltered() || addressFiltered {
+	if statedb.IsTxFiltered() {
+		return state.ErrArbTxFilter
+	}
+
+	addressFiltered, filteredAddresses := statedb.IsAddressFiltered()
+	if addressFiltered {
+		s.buildFilteredTxReport(tx, header, filteredAddresses, positionInBlock)
 		return state.ErrArbTxFilter
 	}
 	return nil
 }
 
-func (s *Sequencer) postTxFilter(header *types.Header, statedb *state.StateDB, _ *arbosState.ArbosState, tx *types.Transaction, sender common.Address, dataGas uint64, result *core.ExecutionResult, _ int) error {
+func (s *Sequencer) postTxFilter(header *types.Header, statedb *state.StateDB, _ *arbosState.ArbosState, tx *types.Transaction, sender common.Address, dataGas uint64, result *core.ExecutionResult, positionInBlock int) error {
 	if s.eventFilter != nil {
 		logs := statedb.GetCurrentTxLogs()
 		for _, l := range logs {
@@ -738,8 +776,11 @@ func (s *Sequencer) postTxFilter(header *types.Header, statedb *state.StateDB, _
 			}
 		}
 	}
-
-	if addressFiltered, _ := statedb.IsAddressFiltered(); statedb.IsTxFiltered() || addressFiltered {
+	if statedb.IsTxFiltered() {
+		return state.ErrArbTxFilter
+	}
+	if addressFiltered, filteredAddresses := statedb.IsAddressFiltered(); addressFiltered {
+		s.buildFilteredTxReport(tx, header, filteredAddresses, positionInBlock)
 		return state.ErrArbTxFilter
 	}
 
@@ -1398,6 +1439,8 @@ func (s *Sequencer) createBlock(ctx context.Context) (returnValue bool) {
 		L1BaseFee:   nil,
 	}
 
+	s.pendingFilteredTxReports = nil
+
 	start := time.Now()
 	var (
 		block *types.Block
@@ -1408,6 +1451,16 @@ func (s *Sequencer) createBlock(ctx context.Context) (returnValue bool) {
 	} else {
 		block, err = s.execEngine.SequenceTransactions(header, hooks, timeboostedTxs)
 	}
+
+	if len(s.pendingFilteredTxReports) > 0 && s.execEngine.filteringReportRPCClient != nil {
+		reports := s.pendingFilteredTxReports
+		s.LaunchThread(func(ctx context.Context) {
+			if _, err := s.execEngine.filteringReportRPCClient.ReportFilteredTransactions(reports).Await(ctx); err != nil {
+				log.Error("failed to report filtered transactions", "count", len(reports), "err", err)
+			}
+		})
+	}
+	s.pendingFilteredTxReports = nil
 	elapsed := time.Since(start)
 	blockCreationTimer.Update(elapsed.Nanoseconds())
 	if elapsed >= time.Second*5 {
