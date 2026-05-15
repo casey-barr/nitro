@@ -1172,6 +1172,9 @@ func GetAndValidateGenesisAssertion(ctx context.Context, l2BlockChain *core.Bloc
 				return err
 			}
 			hasAccounts = accountsReader.More()
+		} else if isNullGenesisAssertion(genesisAssertionCreationInfo) {
+			log.Warn("genesis assertion is null and init data unavailable on this restart; cannot verify init-time account consistency",
+				"genesisAssertionHash", genesisAssertionHash, "genesisBlockHash", genesisBlock.Hash())
 		}
 		return validateGenesisAssertion(genesisAssertionCreationInfo, genesisAssertionHash, genesisBlock.Hash(), sendRoot, hasAccounts)
 	}
@@ -1179,10 +1182,15 @@ func GetAndValidateGenesisAssertion(ctx context.Context, l2BlockChain *core.Bloc
 	return nil
 }
 
+func isNullGenesisAssertion(info *protocol.AssertionCreatedInfo) bool {
+	before := protocol.GoGlobalStateFromSolidity(info.BeforeState.GlobalState)
+	after := protocol.GoGlobalStateFromSolidity(info.AfterState.GlobalState)
+	return before.Batch == after.Batch && before.PosInBatch == after.PosInBatch
+}
+
 func validateGenesisAssertion(genesisAssertionCreationInfo *protocol.AssertionCreatedInfo, genesisAssertionHash [32]byte, genesisHash common.Hash, sendRoot common.Hash, initDataReaderHasAccounts bool) error {
-	beforeGlobalState := protocol.GoGlobalStateFromSolidity(genesisAssertionCreationInfo.BeforeState.GlobalState)
 	afterGlobalState := protocol.GoGlobalStateFromSolidity(genesisAssertionCreationInfo.AfterState.GlobalState)
-	isNullAssertion := beforeGlobalState.Batch == afterGlobalState.Batch && beforeGlobalState.PosInBatch == afterGlobalState.PosInBatch
+	isNullAssertion := isNullGenesisAssertion(genesisAssertionCreationInfo)
 	if isNullAssertion && initDataReaderHasAccounts {
 		return errors.New("genesis assertion is null but there are accounts in the init data")
 	}
