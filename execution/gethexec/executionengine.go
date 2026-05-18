@@ -190,6 +190,9 @@ func (f *DelayedFilteringSequencingHooks) SupportsGroupRollback() bool { return 
 // before the group rollback and passes it through the error.
 func (f *DelayedFilteringSequencingHooks) TxFailed(err error) {
 	var cascadingErr *arbos.ErrFilteredCascadingRedeem
+	// Non-cascading filtering errors are already reported by PostTxFilter;
+	// TxFailed only handles cascading-redeem filtering surfaced via
+	// ErrFilteredCascadingRedeem.
 	if !errors.As(err, &cascadingErr) {
 		return
 	}
