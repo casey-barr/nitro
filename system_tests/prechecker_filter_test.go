@@ -189,6 +189,9 @@ func checkPrecheckerReportFields(t *testing.T, ctx context.Context, builder *Nod
 	require.False(t, report.IsDelayed, "prechecker must not flag tx as delayed")
 	require.Nil(t, report.DelayedReportData, "prechecker must not populate delayed payload")
 	require.Equal(t, uint64(0), report.PositionInBlock, "prechecker has no in-block position")
+	headNum, err := builder.L2.Client.BlockNumber(ctx)
+	require.NoError(t, err)
+	require.Equal(t, headNum+1, report.BlockNumber, "prechecker tx is not yet sequenced; report block should be head+1")
 }
 
 // TestPrecheckerFilterDirectAddress verifies the forwarder's prechecker rejects txs sent to/from a
