@@ -434,7 +434,7 @@ func mainImpl() int {
 		return 1
 	}
 
-	executionDB, initDataReader, l2BlockChain, err := nitroinit.OpenInitializeExecutionDB(ctx, stack, nodeConfig, new(big.Int).SetUint64(nodeConfig.Chain.ID), gethexec.DefaultCacheConfigFor(&nodeConfig.Execution.Caching), tracer, &nodeConfig.Persistent, l1Client, rollupAddrs)
+	executionDB, initDataReader, l2BlockChain, dbFreshlyCreated, err := nitroinit.OpenInitializeExecutionDB(ctx, stack, nodeConfig, new(big.Int).SetUint64(nodeConfig.Chain.ID), gethexec.DefaultCacheConfigFor(&nodeConfig.Execution.Caching), tracer, &nodeConfig.Persistent, l1Client, rollupAddrs)
 	if l2BlockChain != nil {
 		deferFuncs = append(deferFuncs, func() { l2BlockChain.Stop() })
 	}
@@ -451,7 +451,7 @@ func mainImpl() int {
 		return 1
 	}
 	if shouldValidate {
-		if err = nitroinit.GetAndValidateGenesisAssertion(ctx, l2BlockChain, initDataReader, &rollupAddrs, l1Client); err != nil {
+		if err = nitroinit.GetAndValidateGenesisAssertion(ctx, l2BlockChain, initDataReader, &rollupAddrs, l1Client, dbFreshlyCreated); err != nil {
 			log.Error("error trying to validate genesis assertion", "err", err)
 			if !nodeConfig.Init.Force {
 				return 1

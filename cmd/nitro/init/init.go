@@ -613,61 +613,62 @@ func rebuildLocalWasm(ctx context.Context, config *gethexec.Config, l2BlockChain
 	return executionDB, l2BlockChain, nil
 }
 
-func OpenInitializeExecutionDB(ctx context.Context, stack *node.Node, config *config.NodeConfig, chainId *big.Int, cacheConfig *core.BlockChainConfig, tracer *tracing.Hooks, persistentConfig *conf.PersistentConfig, l1Client *ethclient.Client, rollupAddrs chaininfo.RollupAddresses) (ethdb.Database, statetransfer.InitDataReader, *core.BlockChain, error) {
+func OpenInitializeExecutionDB(ctx context.Context, stack *node.Node, config *config.NodeConfig, chainId *big.Int, cacheConfig *core.BlockChainConfig, tracer *tracing.Hooks, persistentConfig *conf.PersistentConfig, l1Client *ethclient.Client, rollupAddrs chaininfo.RollupAddresses) (ethdb.Database, statetransfer.InitDataReader, *core.BlockChain, bool, error) {
 	executionDB, wasmDB, l2BlockChain, chainConfig, err := OpenExistingExecutionDB(stack, config, chainId, cacheConfig, tracer, persistentConfig)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
 
 	var initDataReader statetransfer.InitDataReader
+	dbFreshlyCreated := executionDB == nil
 
-	if executionDB == nil {
+	if dbFreshlyCreated {
 		err := checkAndDownloadDB(ctx, stack, config)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
 		}
 
 		executionDB, wasmDB, err = openDownloadedExecutionDB(stack, config, cacheConfig, persistentConfig)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
 		}
 
 		var genesisArbOSInit *params.ArbOSInit
 
 		initDataReader, chainConfig, genesisArbOSInit, err = GetInit(config, executionDB)
 		if err != nil {
-			return executionDB, nil, nil, err
+			return executionDB, nil, nil, false, err
 		}
 
 		parsedInitMessage, err := GetConsensusParsedInitMsg(ctx, config.Node.ParentChainReader.Enable, chainId, l1Client, &rollupAddrs, chainConfig)
 		if err != nil {
-			return executionDB, nil, nil, err
+			return executionDB, nil, nil, false, err
 		}
 
 		l2BlockChain, err = getNewBlockchain(parsedInitMessage, config, initDataReader, chainConfig, genesisArbOSInit, executionDB, cacheConfig, tracer)
 		if err != nil {
-			return executionDB, nil, nil, err
+			return executionDB, nil, nil, false, err
 		}
 	}
 
 	err = pruneExecutionDB(ctx, executionDB, stack, config, cacheConfig, persistentConfig, l1Client, rollupAddrs)
 	if err != nil {
-		return executionDB, nil, nil, fmt.Errorf("error pruning: %w", err)
+		return executionDB, nil, nil, false, fmt.Errorf("error pruning: %w", err)
 	}
 
 	err = ValidateBlockChain(l2BlockChain, chainConfig)
 	if err != nil {
-		return executionDB, nil, l2BlockChain, err
+		return executionDB, nil, l2BlockChain, false, err
 	}
 
 	err = recreateMissingStates(config, executionDB, l2BlockChain, cacheConfig)
 	if err != nil {
-		return executionDB, nil, l2BlockChain, fmt.Errorf("failed to recreate missing states: %w", err)
+		return executionDB, nil, l2BlockChain, false, fmt.Errorf("failed to recreate missing states: %w", err)
 	}
 
 	executionDB, l2BlockChain, err = rebuildLocalWasm(ctx, &config.Execution, l2BlockChain, executionDB, wasmDB, config.Init.RebuildLocalWasm)
 
-	return executionDB, initDataReader, l2BlockChain, err
+	return executionDB, initDataReader, l2BlockChain, dbFreshlyCreated, err
 }
 
 func recreateMissingStates(config *config.NodeConfig, executionDB ethdb.Database, l2BlockChain *core.BlockChain, cacheConfig *core.BlockChainConfig) error {
@@ -1154,7 +1155,7 @@ func ShouldValidateGenesisAssertion(currentBlock *types.Header, genesisHash comm
 	return currentBlock.Hash() == genesisHash && cfg.ValidateGenesisAssertion, nil
 }
 
-func GetAndValidateGenesisAssertion(ctx context.Context, l2BlockChain *core.BlockChain, initDataReader statetransfer.InitDataReader, rollupAddrs *chaininfo.RollupAddresses, l1Client *ethclient.Client) error {
+func GetAndValidateGenesisAssertion(ctx context.Context, l2BlockChain *core.BlockChain, initDataReader statetransfer.InitDataReader, rollupAddrs *chaininfo.RollupAddresses, l1Client *ethclient.Client, dbFreshlyCreated bool) error {
 	genesisBlock := l2BlockChain.Genesis()
 	sendRoot := types.DeserializeHeaderExtraInformation(genesisBlock.Header()).SendRoot
 	genesisAssertionCreationInfo, genesisAssertionHash, isBoldChain, err := getGenesisAssertionCreationInfo(ctx, rollupAddrs.Rollup, l1Client, genesisBlock.Hash(), sendRoot)
@@ -1163,8 +1164,6 @@ func GetAndValidateGenesisAssertion(ctx context.Context, l2BlockChain *core.Bloc
 	}
 
 	if isBoldChain {
-		// Warm restart has no initDataReader, and the state root can't proxy
-		// "had accounts" because ArbOS state is always written to genesis.
 		hasAccounts := false
 		if initDataReader != nil {
 			accountsReader, err := initDataReader.GetAccountDataReader()
@@ -1172,7 +1171,12 @@ func GetAndValidateGenesisAssertion(ctx context.Context, l2BlockChain *core.Bloc
 				return err
 			}
 			hasAccounts = accountsReader.More()
-		} else if isNullGenesisAssertion(genesisAssertionCreationInfo) {
+		} else if !dbFreshlyCreated && isNullGenesisAssertion(genesisAssertionCreationInfo) {
+			// Warm restart of an existing DB whose original init data is no
+			// longer in memory. The init-time check ran when the DB was first
+			// created; without the original initDataReader we can't re-verify
+			// the null-assertion / has-accounts consistency. The BlockHash
+			// mismatch check below still runs.
 			log.Warn("genesis assertion is null and init data unavailable on this restart; cannot verify init-time account consistency",
 				"genesisAssertionHash", genesisAssertionHash, "genesisBlockHash", genesisBlock.Hash())
 		}

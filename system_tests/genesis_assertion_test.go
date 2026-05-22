@@ -106,7 +106,7 @@ func TestValidateGenesisAssertion(t *gotesting.T) {
 		t.Fatal("initDataReader can't be nil")
 	}
 
-	err := nitroinit.GetAndValidateGenesisAssertion(ctx, l2blockchain, initDataReader, addresses, l1client)
+	err := nitroinit.GetAndValidateGenesisAssertion(ctx, l2blockchain, initDataReader, addresses, l1client, true)
 	Require(t, err)
 }
 
@@ -136,7 +136,7 @@ func TestValidateGenesisAssertionWithBuilder(t *gotesting.T) {
 		t.Fatal("initDataReader can't be nil")
 	}
 
-	err := nitroinit.GetAndValidateGenesisAssertion(ctx, builder.L2.ExecNode.Backend.ArbInterface().BlockChain(), initDataReader, builder.addresses, builder.L1.Client)
+	err := nitroinit.GetAndValidateGenesisAssertion(ctx, builder.L2.ExecNode.Backend.ArbInterface().BlockChain(), initDataReader, builder.addresses, builder.L1.Client, true)
 	Require(t, err)
 }
 
