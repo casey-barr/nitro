@@ -615,6 +615,11 @@ func rebuildLocalWasm(ctx context.Context, config *gethexec.Config, l2BlockChain
 	return executionDB, l2BlockChain, nil
 }
 
+// OpenInitializeExecutionDB opens the execution DB, falling back to download+genesis
+// initialization when no existing DB is found, so a node can start from either a warm
+// restart or a cold first launch through a single entry point. The returned bool reports
+// whether the DB was freshly created on this call, letting callers gate one-time setup
+// (e.g. genesis assertion validation) that must only run on first launch.
 func OpenInitializeExecutionDB(ctx context.Context, stack *node.Node, config *config.NodeConfig, chainId *big.Int, cacheConfig *core.BlockChainConfig, tracer *tracing.Hooks, persistentConfig *conf.PersistentConfig, l1Client *ethclient.Client, rollupAddrs chaininfo.RollupAddresses) (ethdb.Database, statetransfer.InitDataReader, *core.BlockChain, bool, error) {
 	executionDB, wasmDB, l2BlockChain, chainConfig, err := OpenExistingExecutionDB(stack, config, chainId, cacheConfig, tracer, persistentConfig)
 	if err != nil {
