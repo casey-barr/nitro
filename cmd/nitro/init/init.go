@@ -627,9 +627,12 @@ func OpenInitializeExecutionDB(ctx context.Context, stack *node.Node, config *co
 	dbFreshlyCreated := executionDB == nil
 
 	if dbFreshlyCreated {
-		err := checkAndDownloadDB(ctx, stack, config)
+		downloaded, err := checkAndDownloadDB(ctx, stack, config)
 		if err != nil {
 			return nil, nil, nil, false, err
+		}
+		if downloaded {
+			dbFreshlyCreated = false
 		}
 
 		executionDB, wasmDB, err = openDownloadedExecutionDB(stack, config, cacheConfig, persistentConfig)
@@ -902,10 +905,9 @@ func getNewBlockchain(parsedInitMessage *arbostypes.ParsedInitMessage, config *c
 	return l2BlockChain, nil
 }
 
-func checkAndDownloadDB(ctx context.Context, stack *node.Node, config *config.NodeConfig) error {
-	err := checkDBDir(stack, config)
-	if err != nil {
-		return err
+func checkAndDownloadDB(ctx context.Context, stack *node.Node, config *config.NodeConfig) (bool, error) {
+	if err := checkDBDir(stack, config); err != nil {
+		return false, err
 	}
 
 	return downloadDB(ctx, stack, config)
@@ -929,24 +931,24 @@ func checkDBDir(stack *node.Node, config *config.NodeConfig) error {
 	return nil
 }
 
-func downloadDB(ctx context.Context, stack *node.Node, config *config.NodeConfig) error {
+func downloadDB(ctx context.Context, stack *node.Node, config *config.NodeConfig) (bool, error) {
 	if err := setLatestSnapshotUrl(ctx, &config.Init, config.Chain.Name); err != nil {
-		return err
+		return false, err
 	}
 
 	initFile, cleanUpTmp, err := initializeAndDownloadInit(ctx, &config.Init, stack)
 	defer cleanUpTmp()
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	if initFile != "" {
-		if err := extractSnapshot(initFile, stack.InstanceDir(), config.Init.ImportWasm); err != nil {
-			return err
-		}
+	if initFile == "" {
+		return false, nil
 	}
-
-	return nil
+	if err := extractSnapshot(initFile, stack.InstanceDir(), config.Init.ImportWasm); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func openDownloadedExecutionDB(stack *node.Node, config *config.NodeConfig, cacheConfig *core.BlockChainConfig, persistentConfig *conf.PersistentConfig) (ethdb.Database, ethdb.Database, error) {

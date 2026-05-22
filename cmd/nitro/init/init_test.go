@@ -1019,8 +1019,9 @@ func TestCheckAndDownloadDBNoSnapshot(t *testing.T) {
 
 	nodeConfig := config.NodeConfigDefault
 
-	err = checkAndDownloadDB(ctx, stack, &nodeConfig)
+	downloaded, err := checkAndDownloadDB(ctx, stack, &nodeConfig)
 	Require(t, err)
+	require.False(t, downloaded)
 }
 
 func getInitHelper(t *testing.T, ownerAdress string, chainID uint64, emptyState bool, importFile, genesisJsonFile string, useDevInit, skipInitDataReader bool) (statetransfer.InitDataReader, *params.ChainConfig, *params.ArbOSInit, ethdb.Database, func(), error) {
