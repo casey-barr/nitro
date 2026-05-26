@@ -5,6 +5,7 @@ package s3syncer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -17,28 +18,34 @@ import (
 	"github.com/offchainlabs/nitro/util/s3client"
 )
 
+var ErrObjectTooLarge = errors.New("s3 object exceeds max-file-size-mb")
+
 // DataHandler processes downloaded data and the associated digest.
 type DataHandler func(data []byte, digest string) error
 
+type ObjectTooLargeHandler func(size int64)
+
 // Syncer handles S3 object syncing with ETag-based change detection.
 type Syncer struct {
-	client     s3client.FullClient
-	config     *Config
-	handleData DataHandler
-	digestETag string
-	mutex      sync.Mutex
+	client           s3client.FullClient
+	config           *Config
+	handleData       DataHandler
+	onObjectTooLarge ObjectTooLargeHandler
+	digestETag       string
+	mutex            sync.Mutex
 }
 
 const bytesInMB = 1024 * 1024
 
-// NewSyncer creates a new S3 syncer with the given callbacks.
 func NewSyncer(
 	config *Config,
 	dataHandler DataHandler,
+	onObjectTooLarge ObjectTooLargeHandler,
 ) *Syncer {
 	return &Syncer{
-		config:     config,
-		handleData: dataHandler,
+		config:           config,
+		handleData:       dataHandler,
+		onObjectTooLarge: onObjectTooLarge,
 	}
 }
 
@@ -58,6 +65,23 @@ func (s *Syncer) Initialize(ctx context.Context) error {
 	return nil
 }
 
+func (s *Syncer) headAndCheckSize(ctx context.Context) (etag string, size int64, err error) {
+	headOutput, err := s.client.Client().HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.config.Bucket),
+		Key:    aws.String(s.config.ObjectKey),
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("HeadObject failed for s3://%s/%s: %w", s.config.Bucket, s.config.ObjectKey, err)
+	}
+	size = aws.ToInt64(headOutput.ContentLength)
+	if s.config.MaxFileSizeMB > 0 && size > int64(s.config.MaxFileSizeMB)*bytesInMB {
+		s.onObjectTooLarge(size)
+		return "", size, fmt.Errorf("%w: %d bytes > %d MB limit (s3://%s/%s)",
+			ErrObjectTooLarge, size, s.config.MaxFileSizeMB, s.config.Bucket, s.config.ObjectKey)
+	}
+	return aws.ToString(headOutput.ETag), size, nil
+}
+
 // CheckAndSync checks if the S3 object has changed (via ETag) and downloads it if so.
 func (s *Syncer) CheckAndSync(ctx context.Context) error {
 	s.mutex.Lock()
@@ -67,15 +91,10 @@ func (s *Syncer) CheckAndSync(ctx context.Context) error {
 		return fmt.Errorf("S3 client not initialized")
 	}
 
-	headOutput, err := s.client.Client().HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(s.config.Bucket),
-		Key:    aws.String(s.config.ObjectKey),
-	})
+	currentETag, objectSize, err := s.headAndCheckSize(ctx)
 	if err != nil {
-		return fmt.Errorf("HeadObject failed for s3://%s/%s: %w", s.config.Bucket, s.config.ObjectKey, err)
+		return err
 	}
-
-	currentETag := aws.ToString(headOutput.ETag)
 
 	// Compare with stored digest
 	if currentETag == s.digestETag {
@@ -89,7 +108,6 @@ func (s *Syncer) CheckAndSync(ctx context.Context) error {
 		"bucket", s.config.Bucket,
 		"key", s.config.ObjectKey,
 	)
-	objectSize := aws.ToInt64(headOutput.ContentLength)
 	return s.downloadAndHandle(ctx, currentETag, objectSize)
 }
 
@@ -103,18 +121,11 @@ func (s *Syncer) DownloadAndLoad(ctx context.Context) error {
 		return fmt.Errorf("S3 client not initialized")
 	}
 
-	headOutput, err := s.client.Client().HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(s.config.Bucket),
-		Key:    aws.String(s.config.ObjectKey),
-	})
+	newETagDigest, objectSize, err := s.headAndCheckSize(ctx)
 	if err != nil {
-		return fmt.Errorf("HeadObject failed for s3://%s/%s: %w", s.config.Bucket, s.config.ObjectKey, err)
+		return err
 	}
-
-	newETagDigest := aws.ToString(headOutput.ETag)
-	objectSize := aws.ToInt64(headOutput.ContentLength)
-	err = s.downloadAndHandle(ctx, newETagDigest, objectSize)
-	return err
+	return s.downloadAndHandle(ctx, newETagDigest, objectSize)
 }
 
 // downloadAndHandle downloads the S3 object to a temp file and calls the data handler.

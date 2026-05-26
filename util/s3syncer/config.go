@@ -19,6 +19,7 @@ type Config struct {
 	ChunkSizeMB     int    `koanf:"chunk-size-mb"`
 	MaxRetries      int    `koanf:"max-retries"`
 	Concurrency     int    `koanf:"concurrency"`
+	MaxFileSizeMB   int    `koanf:"max-file-size-mb"`
 }
 
 // ConfigAddOptions adds S3 configuration flags to the given flag set.
@@ -29,6 +30,7 @@ func ConfigAddOptions(prefix string, f *pflag.FlagSet) {
 	f.Int(prefix+".chunk-size-mb", DefaultS3Config.ChunkSizeMB, "S3 multipart download part size in MB")
 	f.Int(prefix+".concurrency", DefaultS3Config.Concurrency, "S3 multipart download concurrency")
 	f.Int(prefix+".max-retries", DefaultS3Config.MaxRetries, "maximum retries for S3 part body download")
+	f.Int(prefix+".max-file-size-mb", DefaultS3Config.MaxFileSizeMB, "maximum allowed S3 object size in MB; if the object is larger, skip the download (0 disables the check)")
 }
 
 // Validate checks that required S3 configuration fields are set.
