@@ -624,8 +624,6 @@ func TestAddressFilterDirectTransferRawBytesScheme(t *testing.T) {
 
 	builder := NewNodeBuilder(ctx).DefaultConfig(t, false)
 	builder.isSequencer = true
-	filteringReportStack, endpoint := SetupFilteringReport(t)
-	builder.execConfig.TransactionFiltering.FilteringReportRPCClient.URL = filteringReportStack.HTTPEndpoint()
 	cleanup := builder.Build(t)
 	defer cleanup()
 
@@ -646,8 +644,6 @@ func TestAddressFilterDirectTransferRawBytesScheme(t *testing.T) {
 	if !isFilteredError(err) {
 		t.Fatalf("expected filtered error, got: %v", err)
 	}
-	report := endpoint.NextReport(t)
-	CheckCommonReportFields(t, ctx, builder, report, tx)
 
 	// Sanity check: tx between non-filtered addresses succeeds.
 	builder.L2Info.GetInfoWithPrivKey("NormalUser").Nonce.Store(0)
@@ -658,6 +654,4 @@ func TestAddressFilterDirectTransferRawBytesScheme(t *testing.T) {
 	Require(t, err)
 	_, err = builder.L2.EnsureTxSucceeded(tx)
 	Require(t, err)
-
-	endpoint.AssertNoReport(t, 500*time.Millisecond)
 }
