@@ -5,6 +5,7 @@ package s3syncer
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/spf13/pflag"
 
@@ -43,6 +44,9 @@ func (c *Config) Validate() error {
 	}
 	if c.ObjectKey == "" {
 		return errors.New("s3 object-key is required")
+	}
+	if c.MaxFileSizeMB < 0 {
+		return fmt.Errorf("s3 max-file-size-mb must be >= 0, got %d", c.MaxFileSizeMB)
 	}
 	return nil
 }

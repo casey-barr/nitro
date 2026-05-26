@@ -65,6 +65,16 @@ func TestConfigValidate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "negative max-file-size-mb",
+			config: Config{
+				Config:        s3client.Config{Region: "us-east-1"},
+				Bucket:        "test-bucket",
+				ObjectKey:     "path/to/file.json",
+				MaxFileSizeMB: -1,
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
