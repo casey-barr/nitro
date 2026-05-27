@@ -32,6 +32,9 @@ var (
 	externalEndpointNonRetryableFailuresCounter = metrics.NewRegisteredCounter(
 		"arb/filtering-report/forwarder/external_endpoint_non_retryable_failures_total", nil,
 	)
+	externalEndpointSuccessesCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/external_endpoint_successes_total", nil,
+	)
 )
 
 type ExternalEndpointRetryableErrorSlowdownConfig struct {
@@ -201,6 +204,7 @@ func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableErro
 		}
 		return 0
 	}
+	externalEndpointSuccessesCounter.Inc(1)
 	*consecutiveRetryableErrors = 0
 	if err = r.queueClient.Delete(ctx, *msg.ReceiptHandle); err != nil {
 		log.Error("Failed to delete SQS message after forwarding", "err", err, "messageId", *msg.MessageId)
