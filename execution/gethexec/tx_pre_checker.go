@@ -332,7 +332,7 @@ func (c *TxPreChecker) checkFilteredAddresses(ctx context.Context, tx *types.Tra
 	}
 	msg.SkipNonceChecks = true
 
-	_, err = gasestimator.Run(ctx, msg, &gasestimator.Options{
+	_, filteredAddresses, err := gasestimator.Run(ctx, msg, &gasestimator.Options{
 		Config:           c.bc.Config(),
 		Chain:            c.bc,
 		Header:           header,
@@ -340,11 +340,9 @@ func (c *TxPreChecker) checkFilteredAddresses(ctx context.Context, tx *types.Tra
 		Backend:          c.backend,
 		RunScheduledTxes: retryables.RunScheduledTxes,
 		TxFilterer:       c.txFilterer,
-		ReportFilteredTx: func(_ context.Context, records []filter.FilteredAddressRecord) {
-			c.reportFilteredTx(tx, header, records)
-		},
 	})
 	if errors.Is(err, state.ErrArbTxFilter) {
+		c.reportFilteredTx(tx, header, filteredAddresses)
 		return err
 	}
 	// Other execution errors are ignored since the pre-check is only concerned
