@@ -32,6 +32,7 @@ type Syncer struct {
 	handleData   DataHandler
 	onObjectSize ObjectSizeHandler
 	digestETag   string
+	failedETag   string
 	mutex        sync.Mutex
 }
 
@@ -102,6 +103,12 @@ func (s *Syncer) CheckAndSync(ctx context.Context) error {
 		return nil
 	}
 
+	if currentETag == s.failedETag {
+		log.Warn("S3 object unchanged since last failed load, skipping re-download",
+			"etag", currentETag, "bucket", s.config.Bucket, "key", s.config.ObjectKey)
+		return nil
+	}
+
 	log.Info("S3 object changed, downloading",
 		"old_etag", s.digestETag,
 		"new_etag", currentETag,
@@ -148,9 +155,15 @@ func (s *Syncer) downloadAndHandle(ctx context.Context, etagDigest string, objec
 		return fmt.Errorf("download failed for s3://%s/%s: %w", s.config.Bucket, s.config.ObjectKey, err)
 	}
 
-	err = s.handleData(buffer.Bytes(), etagDigest)
-	if err == nil {
-		s.digestETag = etagDigest
+	return s.applyHandled(etagDigest, buffer.Bytes())
+}
+
+func (s *Syncer) applyHandled(etagDigest string, data []byte) error {
+	if err := s.handleData(data, etagDigest); err != nil {
+		s.failedETag = etagDigest
+		return err
 	}
-	return err
+	s.digestETag = etagDigest
+	s.failedETag = ""
+	return nil
 }
