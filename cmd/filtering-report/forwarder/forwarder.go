@@ -35,6 +35,12 @@ var (
 	externalEndpointSuccessesCounter = metrics.NewRegisteredCounter(
 		"arb/filtering-report/forwarder/external_endpoint_successes_total", nil,
 	)
+	sqsReceiveFailuresCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/sqs_receive_failures_total", nil,
+	)
+	sqsReceiveSuccessesCounter = metrics.NewRegisteredCounter(
+		"arb/filtering-report/forwarder/sqs_receive_successes_total", nil,
+	)
 )
 
 type ExternalEndpointRetryableErrorSlowdownConfig struct {
@@ -181,9 +187,11 @@ func (r *Forwarder) Start(ctx context.Context) {
 func (r *Forwarder) pollAndForward(ctx context.Context, consecutiveRetryableErrors *int) time.Duration {
 	msgs, err := r.queueClient.Receive(ctx, r.config.SQSWaitTimeSeconds, 1)
 	if err != nil {
+		sqsReceiveFailuresCounter.Inc(1)
 		log.Error("Failed to receive SQS messages", "err", err)
 		return r.config.PollInterval
 	}
+	sqsReceiveSuccessesCounter.Inc(1)
 	if len(msgs) == 0 {
 		return r.config.PollInterval
 	}
