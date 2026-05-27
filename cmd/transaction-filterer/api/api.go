@@ -25,12 +25,16 @@ import (
 	"github.com/offchainlabs/nitro/util/stopwaiter"
 )
 
-var addFilteredTransactionFailureCounter = metrics.NewRegisteredCounter(
-	"arb/transaction-filterer/add_filtered_transaction_failures_total", nil,
-)
-
-var filterQueueDepthGauge = metrics.NewRegisteredGauge(
-	"arb/transaction-filterer/filter_queue_depth", nil,
+var (
+	addFilteredTransactionFailureCounter = metrics.NewRegisteredCounter(
+		"arb/transaction-filterer/add_filtered_transaction_failures_total", nil,
+	)
+	addFilteredTransactionSuccessCounter = metrics.NewRegisteredCounter(
+		"arb/transaction-filterer/add_filtered_transaction_successes_total", nil,
+	)
+	filterQueueDepthGauge = metrics.NewRegisteredGauge(
+		"arb/transaction-filterer/filter_queue_depth", nil,
+	)
 )
 
 const filterQueueSize = 100
@@ -91,6 +95,7 @@ func (t *TransactionFiltererAPI) filter(ctx context.Context, txHashToFilter comm
 		log.Warn("Failed to filter transaction", "txHashToFilter", txHashToFilter.Hex(), "err", err)
 		return
 	}
+	addFilteredTransactionSuccessCounter.Inc(1)
 	log.Info("Submitted filter transaction", "txHashToFilter", txHashToFilter.Hex(), "txHash", tx.Hash().Hex())
 }
 
