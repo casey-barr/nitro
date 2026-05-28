@@ -631,7 +631,6 @@ func (p *TxProcessor) EndTxHook(gasLeft uint64, usedMultiGas multigas.MultiGas, 
 	}
 
 	var multiDimensionalCost *big.Int
-	var err error
 	if p.state.L2PricingState().ArbosVersion >= params.ArbosVersion_MultiGasConstraintsVersion {
 		shouldRefund := true
 		if p.state.L2PricingState().ArbosVersion >= params.ArbosVersion_MultiGasRefundFix {
@@ -640,6 +639,7 @@ func (p *TxProcessor) EndTxHook(gasLeft uint64, usedMultiGas multigas.MultiGas, 
 			shouldRefund = gasModel == l2pricing.GasModelMultiGasConstraints
 		}
 		if shouldRefund {
+			var err error
 			multiDimensionalCost, err = p.state.L2PricingState().MultiDimensionalPriceForRefund(usedMultiGas, basefee)
 			p.state.Restrict(err)
 		}
