@@ -339,39 +339,34 @@ func (ps *L2PricingState) calcBaseFeeFromExponent(exponent arbmath.Bips) (*big.I
 	}
 }
 
-func (ps *L2PricingState) GetMultiGasBaseFeePerResource(basefee *big.Int) ([]*big.Int, error) {
-	// At v61+ the SingleDim override uses the block's actual base fee (passed in
-	// by the caller). Pre-v61 chains keep reading BaseFeeWei() so historical
-	// replays stay deterministic.
-	var override *big.Int
-	if ps.ArbosVersion >= params.ArbosVersion_MultiGasRefundFix {
-		override = basefee
-	} else {
-		baseFeeWei, err := ps.BaseFeeWei()
+func (ps *L2PricingState) GetMultiGasBaseFeePerResource(blockBaseFee *big.Int) ([]*big.Int, error) {
+	// At MultiGasRefundFix, the SingleDim base fee uses the block's actual base fee (passed in by the caller).
+	// Pre-MultiGasRefundFix chains keep reading BaseFeeWei() so historical replays stay deterministic.
+	if ps.ArbosVersion < params.ArbosVersion_MultiGasRefundFix {
+		var err error
+		blockBaseFee, err = ps.BaseFeeWei()
 		if err != nil {
 			return nil, err
 		}
-		override = baseFeeWei
 	}
-
 	fees := make([]*big.Int, multigas.NumResourceKind)
 	for kind := range multigas.ResourceKind(multigas.NumResourceKind) {
-		baseFee, err := ps.multiGasFees.GetCurrentBlockFee(kind)
+		resourceBaseFee, err := ps.multiGasFees.GetCurrentBlockFee(kind)
 		if err != nil {
 			return nil, err
 		}
 		// Force single-dimensional gas (and the unlikely zero-basefee case) to use the max base fee
 		// because it is not refundable.
-		if kind == multigas.ResourceKindSingleDim || baseFee.Sign() == 0 {
-			baseFee = override
+		if kind == multigas.ResourceKindSingleDim || resourceBaseFee.Sign() == 0 {
+			resourceBaseFee = blockBaseFee
 		}
-		fees[kind] = baseFee
+		fees[kind] = resourceBaseFee
 	}
 	return fees, nil
 }
 
-func (ps *L2PricingState) MultiDimensionalPriceForRefund(gasUsed multigas.MultiGas, basefee *big.Int) (*big.Int, error) {
-	fees, err := ps.GetMultiGasBaseFeePerResource(basefee)
+func (ps *L2PricingState) MultiDimensionalPriceForRefund(gasUsed multigas.MultiGas, blockBaseFee *big.Int) (*big.Int, error) {
+	fees, err := ps.GetMultiGasBaseFeePerResource(blockBaseFee)
 	if err != nil {
 		return nil, err
 	}
