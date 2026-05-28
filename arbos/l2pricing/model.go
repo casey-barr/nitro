@@ -339,11 +339,19 @@ func (ps *L2PricingState) calcBaseFeeFromExponent(exponent arbmath.Bips) (*big.I
 	}
 }
 
-func (ps *L2PricingState) GetMultiGasBaseFeePerResource() ([]*big.Int, error) {
-	// Base fee is max of per-resource-kind base fees
-	baseFeeWei, err := ps.BaseFeeWei()
-	if err != nil {
-		return nil, err
+func (ps *L2PricingState) GetMultiGasBaseFeePerResource(basefee *big.Int) ([]*big.Int, error) {
+	// At v61+ the SingleDim override uses the block's actual base fee (passed in
+	// by the caller). Pre-v61 chains keep reading BaseFeeWei() so historical
+	// replays stay deterministic.
+	var override *big.Int
+	if ps.ArbosVersion >= params.ArbosVersion_MultiGasRefundFix {
+		override = basefee
+	} else {
+		baseFeeWei, err := ps.BaseFeeWei()
+		if err != nil {
+			return nil, err
+		}
+		override = baseFeeWei
 	}
 
 	fees := make([]*big.Int, multigas.NumResourceKind)
@@ -354,16 +362,16 @@ func (ps *L2PricingState) GetMultiGasBaseFeePerResource() ([]*big.Int, error) {
 		}
 		// Force single-dimensional gas (and the unlikely zero-basefee case) to use the max base fee
 		// because it is not refundable.
-		if kind == multigas.ResourceKindSingleDim || baseFee.Cmp(big.NewInt(0)) == 0 {
-			baseFee = baseFeeWei
+		if kind == multigas.ResourceKindSingleDim || baseFee.Sign() == 0 {
+			baseFee = override
 		}
 		fees[kind] = baseFee
 	}
 	return fees, nil
 }
 
-func (ps *L2PricingState) MultiDimensionalPriceForRefund(gasUsed multigas.MultiGas) (*big.Int, error) {
-	fees, err := ps.GetMultiGasBaseFeePerResource()
+func (ps *L2PricingState) MultiDimensionalPriceForRefund(gasUsed multigas.MultiGas, basefee *big.Int) (*big.Int, error) {
+	fees, err := ps.GetMultiGasBaseFeePerResource(basefee)
 	if err != nil {
 		return nil, err
 	}

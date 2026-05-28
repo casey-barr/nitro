@@ -623,6 +623,13 @@ func (p *TxProcessor) EndTxHook(gasLeft uint64, usedMultiGas multigas.MultiGas, 
 	}
 	gasUsed := p.msg.GasLimit - gasLeft
 
+	var basefee *big.Int
+	if p.evm.Context.BaseFeeInBlock != nil {
+		basefee = p.evm.Context.BaseFeeInBlock
+	} else {
+		basefee = p.evm.Context.BaseFee
+	}
+
 	var multiDimensionalCost *big.Int
 	var err error
 	if p.state.L2PricingState().ArbosVersion >= params.ArbosVersion_MultiGasConstraintsVersion {
@@ -633,7 +640,7 @@ func (p *TxProcessor) EndTxHook(gasLeft uint64, usedMultiGas multigas.MultiGas, 
 			shouldRefund = gasModel == l2pricing.GasModelMultiGasConstraints
 		}
 		if shouldRefund {
-			multiDimensionalCost, err = p.state.L2PricingState().MultiDimensionalPriceForRefund(usedMultiGas)
+			multiDimensionalCost, err = p.state.L2PricingState().MultiDimensionalPriceForRefund(usedMultiGas, basefee)
 			p.state.Restrict(err)
 		}
 	}
@@ -755,12 +762,6 @@ func (p *TxProcessor) EndTxHook(gasLeft uint64, usedMultiGas multigas.MultiGas, 
 		return
 	}
 
-	var basefee *big.Int
-	if p.evm.Context.BaseFeeInBlock != nil {
-		basefee = p.evm.Context.BaseFeeInBlock
-	} else {
-		basefee = p.evm.Context.BaseFee
-	}
 	if gasUsed < p.posterGas {
 		log.Error("gas used < poster gas", "gasUsed", gasUsed, "posterGas", p.posterGas)
 	}

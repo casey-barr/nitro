@@ -139,7 +139,7 @@ func TestEndTxHookMultiGasRefundNormalTx(t *testing.T) {
 
 	singleGasCost := new(big.Int).Mul(baseFee, new(big.Int).SetUint64(gasUsed))
 
-	multiDimensionalCost, err := txProcessor.state.L2PricingState().MultiDimensionalPriceForRefund(usedMultiGas)
+	multiDimensionalCost, err := txProcessor.state.L2PricingState().MultiDimensionalPriceForRefund(usedMultiGas, baseFee)
 	require.NoError(t, err)
 
 	expectedRefund := new(big.Int).Sub(singleGasCost, multiDimensionalCost)
@@ -214,7 +214,7 @@ func TestEndTxHookMultiGasRefundRetryableTx(t *testing.T) {
 	gasFeeCap := new(big.Int).Set(baseFee)
 	simpleGasCost := new(big.Int).Mul(gasFeeCap, new(big.Int).SetUint64(gasUsed))
 
-	multiDimensionalCost, err := pricing.MultiDimensionalPriceForRefund(usedMultiGas)
+	multiDimensionalCost, err := pricing.MultiDimensionalPriceForRefund(usedMultiGas, baseFee)
 	require.NoError(t, err)
 
 	expectedRefund := new(big.Int).Sub(simpleGasCost, multiDimensionalCost)
