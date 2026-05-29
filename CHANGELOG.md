@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [v3.10.2-rc.2](https://github.com/OffchainLabs/prysm/compare/v3.10.2-rc.1...v3.10.2-rc.2) - 2026-05-28
+
+### Fixed
+
+- BoLD assertion poster no longer logs `ASSERTION_NOT_EXIST` at error level when the configured RPC head block is `finalized` and an assertion has been observed onchain but not yet finalized. The poster now defers its cursor advance and lets `syncAssertions` pick the assertion up once it reaches the configured head, so `assertionChainData` only ever caches data from the reorg-safe RPC head. [[PR]](https://github.com/OffchainLabs/prysm/pull/287)
+
 ## [v3.10.2-rc.1](https://github.com/OffchainLabs/prysm/compare/v3.10.1...v3.10.2-rc.1) - 2026-05-27
 
 ### Configuration
