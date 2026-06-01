@@ -4,7 +4,6 @@
 package gethexec
 
 import (
-	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -69,10 +68,5 @@ func (f *txFilterer) reportFilteredTx(tx *types.Transaction, header *types.Heade
 		IsDelayed:         false,
 		DelayedReportData: nil,
 	}
-	promise := f.filteringReportRPCClient.ReportFilteredTransactions([]addressfilter.FilteredTxReport{report})
-	f.filteringReportRPCClient.LaunchThread(func(ctx context.Context) {
-		if _, err := promise.Await(ctx); err != nil {
-			log.Error("failed to deliver filtered tx report", "txHash", txHash, "err", err)
-		}
-	})
+	f.filteringReportRPCClient.ReportFilteredTransactions([]addressfilter.FilteredTxReport{report})
 }
