@@ -12,12 +12,12 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
-- BoLD assertion poster no longer logs `ASSERTION_NOT_EXIST` at error level when the configured RPC head block is `finalized` and an assertion has been observed onchain but not yet finalized.
+- Improve BoLD assertion poster logs.
 - Fixed initialization of redis-validator.
 
 ### Added
 
-- NIT-4804: address-filter `HashStore` now supports `hashing_scheme: "sha256-rawbytesinput"` on the S3 hash list payload, hashing `sha256(salt[:] || address[:])` instead of the string-concat form.
+- NIT-4804: address-filter now supports `hashing_scheme: "sha256-rawbytesinput"`
 
 ### Changed
 
