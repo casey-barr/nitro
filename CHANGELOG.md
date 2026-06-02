@@ -8,7 +8,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Configuration
 
-- Add `TransactionFiltering.Enable` master switch (default `false`), replaces `AddressFilter.Enable`.
+- Add `--execution.transaction-filtering.enable` master switch (default `false`), replaces `--execution.address-filter.enable`.
 
 ### Fixed
 
