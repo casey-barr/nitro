@@ -431,6 +431,7 @@ func ProduceBlockAdvanced(
 				return nil, nil, err
 			}
 
+			buildState.statedb.NewTxAddressCheckerState()
 			// Writes to statedb object should be avoided to prevent invalid state from permeating as statedb snapshot is not taken
 			if isUserTx {
 				if err = sequencingHooks.PreTxFilter(chainConfig, header, buildState.statedb, buildState.arbState, tx, options, sender, l1Info, len(buildState.receipts)); err != nil {

@@ -31,6 +31,7 @@ type txFilterer struct {
 func (f *txFilterer) Setup(statedb *state.StateDB) {
 	statedb.SetAddressChecker(f.execEngine.addressChecker)
 	statedb.SetTxContext(common.Hash{}, 0)
+	statedb.NewTxAddressCheckerState()
 }
 
 func (f *txFilterer) TouchAddresses(statedb *state.StateDB, tx *types.Transaction, sender common.Address) {
