@@ -4,29 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
-## [v3.10.2](https://github.com/OffchainLabs/nitro/compare/v3.10.2-rc.2...v3.10.2) - 2026-06-02
+## [v3.10.2](https://github.com/OffchainLabs/nitro/compare/v3.10.1...v3.10.2) - 2026-06-02
 
 ### Configuration
 
-- Add `TransactionFiltering.Enable` master switch (default `false`), replaces `AddressFilter.Enable`. [[PR]](https://github.com/OffchainLabs/nitro-private/pull/294)
+- Add `TransactionFiltering.Enable` master switch (default `false`), replaces `AddressFilter.Enable`.
 
 ### Fixed
 
-- BoLD assertion poster no longer logs `ASSERTION_NOT_EXIST` at error level when the configured RPC head block is `finalized` and an assertion has been observed onchain but not yet finalized. [[PR]](https://github.com/OffchainLabs/nitro-private/pull/287)
-- Fixed initialization of redis-validator. [[PR]](https://github.com/OffchainLabs/nitro-private/pull/297)
+- BoLD assertion poster no longer logs `ASSERTION_NOT_EXIST` at error level when the configured RPC head block is `finalized` and an assertion has been observed onchain but not yet finalized.
+- Fixed initialization of redis-validator.
 
 ### Added
 
-- NIT-4804: address-filter `HashStore` now supports `hashing_scheme: "sha256-rawbytesinput"` on the S3 hash list payload, hashing `sha256(salt[:] || address[:])` instead of the string-concat form. [[PR]](https://github.com/OffchainLabs/nitro-private/pull/303)
+- NIT-4804: address-filter `HashStore` now supports `hashing_scheme: "sha256-rawbytesinput"` on the S3 hash list payload, hashing `sha256(salt[:] || address[:])` instead of the string-concat form.
 
 ### Changed
 
-- `EnableETHCallFilter` now scopes to `eth_estimateGas` only; no longer gates prechecker filtering. [[PR]](https://github.com/OffchainLabs/nitro-private/pull/294)
-- Skip prechecker transaction-filter dry-run on sequencer nodes. [[PR]](https://github.com/OffchainLabs/nitro-private/pull/294)
+- `EnableETHCallFilter` now scopes to `eth_estimateGas` only; no longer gates prechecker filtering.
+- Skip prechecker transaction-filter dry-run on sequencer nodes.
 
 ### Internal
 
-- Cache hash keys for MultiGasFees substorage. [[PR]](https://github.com/OffchainLabs/nitro-private/pull/290)
+- Cache hash keys for MultiGasFees substorage.
 
 ## [v3.10.1](https://github.com/OffchainLabs/nitro/compare/v3.10.0...v3.10.1) - 2026-05-12
 
