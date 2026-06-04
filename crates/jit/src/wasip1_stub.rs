@@ -6,7 +6,7 @@
 use caller_env::{self, GuestPtr, wasip1_stub::Errno};
 
 use crate::{
-    caller_env::{JitEnv},
+    caller_env::JitEnv,
     machine::{Escape, WasmEnvMut},
 };
 

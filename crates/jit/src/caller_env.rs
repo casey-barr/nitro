@@ -1,9 +1,9 @@
 // Copyright 2022-2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
-use caller_env::{ExecEnv, wasmer_traits::WasmerMem};
+use caller_env::{ExecEnv, wasmer_traits::WasmerMem, wavmio::WavmIo};
 use rand::Rng;
-use caller_env::wavmio::WavmIo;
+
 use crate::machine::{WasmEnv, WasmEnvMut};
 
 pub(crate) trait JitEnv<'a> {
