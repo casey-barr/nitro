@@ -1051,7 +1051,6 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		isMsgForPrefetch,
 		runCtx,
 		s.exposeMultiGas,
-		s.addressChecker,
 	)
 
 	return block, statedb, receipts, err

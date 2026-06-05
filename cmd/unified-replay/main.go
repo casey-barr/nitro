@@ -138,7 +138,7 @@ func produceBlock(msgHash common.Hash) {
 		}
 
 		chainContext := WavmChainContext{chainConfig: chainConfig}
-		newBlock, _, _, err = arbos.ProduceBlock(message.Message, message.DelayedMessagesRead, lastBlockHeader, statedb, chainContext, false, core.NewMessageReplayContext(), false, nil)
+		newBlock, _, _, err = arbos.ProduceBlock(message.Message, message.DelayedMessagesRead, lastBlockHeader, statedb, chainContext, false, core.NewMessageReplayContext(), false)
 		if err != nil {
 			panic(err)
 		}
