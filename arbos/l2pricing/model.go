@@ -366,8 +366,8 @@ func (ps *L2PricingState) GetMultiGasBaseFeePerResource(blockBaseFee *big.Int) (
 }
 
 // MultiDimensionalPriceForRefund returns the multi-gas fee considering each dimension's base-fee.
-// It doesn't take in consideration EVM SSTORE refunds. So, the transaction will be refunded the
-// maximum between `single-gas fee minus EVM refunds` AND `multi-gas fee without EVM refunds`.
+// It doesn't take in consideration EVM SSTORE refunds. So, the transaction will be charged the
+// minimum between `single-gas fee minus EVM refunds` AND `multi-gas fee without EVM refunds`.
 func (ps *L2PricingState) MultiDimensionalPriceForRefund(usedMultiGas multigas.MultiGas, blockBaseFee *big.Int) (*big.Int, error) {
 	fees, err := ps.GetMultiGasBaseFeePerResource(blockBaseFee)
 	if err != nil {
