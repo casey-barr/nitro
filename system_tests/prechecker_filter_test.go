@@ -542,7 +542,6 @@ func TestPrecheckerFilterCascadingRedeemDepth4(t *testing.T) {
 	testPrecheckerFilterCascadingRedeem(t, 4)
 }
 
-// TestPrecheckerFilterContractCall: postTxFilter via PushContract on inner CALL, no EventFilter.
 func TestPrecheckerFilterContractCall(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
