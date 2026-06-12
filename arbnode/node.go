@@ -1662,9 +1662,8 @@ func CreateConsensusNode(
 		executionRecorder = rpcClient
 		arbOSVersionGetter = rpcClient
 		if executionRPCClientURL == "self" || executionRPCClientURL == "self-auth" {
-			// Same-process loopback: the in-process execution node is available,
-			// so sequencing stays in-process. The RPC client does not implement
-			// ExecutionSequencer, as sequencing over remote RPC is not supported.
+			// Sequencing over RPC is not supported yet, so the in-process
+			// execution node handles sequencing.
 			executionSequencer = containers.Some[execution.ExecutionSequencer](fullExecutionClient)
 		} else {
 			executionSequencer = containers.None[execution.ExecutionSequencer]()
