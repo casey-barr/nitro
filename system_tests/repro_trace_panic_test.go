@@ -42,9 +42,11 @@ func TestReproTraceTimeoutEmptyCallstackPanic(t *testing.T) {
 				err := l2rpc.CallContext(ctx, &blockTrace, "debug_traceBlockByNumber",
 					rpc.BlockNumber(bn), // #nosec G115
 					map[string]interface{}{"tracer": tracer, "timeout": "1ns"})
-				// A timed-out trace must return an error, never crash the handler.
-				if err != nil && strings.Contains(err.Error(), "method handler crashed") {
-					t.Fatalf("tracer %s crashed the RPC handler on a timed-out trace: %v", tracer, err)
+				// A timed-out trace must either complete (nil) or report the timeout. It must
+				// never crash the handler ("method handler crashed") or return the misleading
+				// "incorrect number of top-level calls" when no top-level frame was captured.
+				if err != nil && !strings.Contains(err.Error(), "execution timeout") {
+					t.Fatalf("tracer %s: timed-out trace returned unexpected error (want nil or \"execution timeout\"): %v", tracer, err)
 				}
 			}
 		}
