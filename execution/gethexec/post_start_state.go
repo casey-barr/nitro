@@ -65,6 +65,7 @@ type PostStartExecutionEnvironment struct {
 type postStartStateEntry struct {
 	mu          sync.Mutex
 	rootOnce    sync.Once
+	root        common.Hash
 	rootErr     error
 	identity    PostStartStateIdentity
 	environment PostStartExecutionEnvironment
@@ -74,12 +75,13 @@ type postStartStateEntry struct {
 // PostStartStateStore retains a small, in-memory window of exact StateDB copies
 // captured after StartBlock and before the first user transaction.
 type PostStartStateStore struct {
-	mu       sync.RWMutex
-	chain    *core.BlockChain
-	capacity int
-	instance common.Hash
-	epoch    uint64
-	entries  []*postStartStateEntry
+	mu            sync.RWMutex
+	chain         *core.BlockChain
+	capacity      int
+	instance      common.Hash
+	epoch         uint64
+	entries       []*postStartStateEntry
+	canonicalHash func(uint64) common.Hash
 }
 
 func NewPostStartStateStore(chain *core.BlockChain, capacity int) *PostStartStateStore {
@@ -87,12 +89,16 @@ func NewPostStartStateStore(chain *core.BlockChain, capacity int) *PostStartStat
 		capacity = 1
 	}
 	instanceSeed := fmt.Sprintf("%p:%d", chain, time.Now().UnixNano())
-	return &PostStartStateStore{
+	store := &PostStartStateStore{
 		chain:    chain,
 		capacity: capacity,
 		instance: crypto.Keccak256Hash([]byte(instanceSeed)),
 		epoch:    1,
 	}
+	if chain != nil {
+		store.canonicalHash = chain.GetCanonicalHash
+	}
+	return store
 }
 
 type postStartStateObserver struct {
@@ -257,14 +263,28 @@ func (s *PostStartStateStore) getByMessage(messageIndex uint64, messageDigest co
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	matched := false
 	for i := len(s.entries) - 1; i >= 0; i-- {
 		entry := s.entries[i]
 		if uint64(entry.identity.MessageIndex) == messageIndex &&
 			entry.identity.MessageDigest == messageDigest {
-			return entry, nil
+			matched = true
+			if s.canonicalHash == nil ||
+				s.canonicalHash(uint64(entry.identity.ParentBlockNumber)) == entry.identity.ParentBlockHash {
+				return entry, nil
+			}
 		}
 	}
+	if matched {
+		return nil, errPostStartNotCanonical
+	}
 	return nil, errPostStartStateNotFound
+}
+
+func (e *postStartStateEntry) snapshot() (PostStartStateIdentity, PostStartExecutionEnvironment, *state.StateDB) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.identity, e.environment, e.state
 }
 
 type PostStartAccountRequest struct {
@@ -309,14 +329,15 @@ type PostStartBlockHashResult struct {
 }
 
 type PostStartStateResult struct {
-	Identity    PostStartStateIdentity         `json:"identity"`
+	Identity    PostStartStateIdentity        `json:"identity"`
 	Environment PostStartExecutionEnvironment `json:"environment"`
-	Accounts    []PostStartAccountResult       `json:"accounts"`
-	BlockHashes []PostStartBlockHashResult     `json:"blockHashes"`
+	Accounts    []PostStartAccountResult      `json:"accounts"`
+	BlockHashes []PostStartBlockHashResult    `json:"blockHashes"`
 }
 
 type PostStartStateAPI struct {
-	store *PostStartStateStore
+	store              *PostStartStateStore
+	afterEntrySnapshot func()
 }
 
 func NewPostStartStateAPI(store *PostStartStateStore) *PostStartStateAPI {
@@ -352,100 +373,108 @@ func (api *PostStartStateAPI) getBatch(request PostStartStateRequest) (PostStart
 		return PostStartStateResult{}, fmt.Errorf("too many block-hash reads: %d", len(request.BlockNumbers))
 	}
 
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
-	childNumber := uint64(entry.identity.ChildBlockNumber)
-	parentNumber := uint64(entry.identity.ParentBlockNumber)
-	if request.ParentBlockHash != (common.Hash{}) && request.ParentBlockHash != entry.identity.ParentBlockHash {
+	identity, environment, retainedState := entry.snapshot()
+	if api.afterEntrySnapshot != nil {
+		api.afterEntrySnapshot()
+	}
+	snapshot := retainedState.Copy()
+	childNumber := uint64(identity.ChildBlockNumber)
+	parentNumber := uint64(identity.ParentBlockNumber)
+	if request.ParentBlockHash != (common.Hash{}) && request.ParentBlockHash != identity.ParentBlockHash {
 		return PostStartStateResult{}, errPostStartIdentity
 	}
-	if request.ChildBlockNumber != 0 && request.ChildBlockNumber != entry.identity.ChildBlockNumber {
+	if request.ChildBlockNumber != 0 && request.ChildBlockNumber != identity.ChildBlockNumber {
 		return PostStartStateResult{}, errPostStartIdentity
 	}
-	if uint64(request.MessageIndex) != uint64(entry.identity.MessageIndex) {
+	if uint64(request.MessageIndex) != uint64(identity.MessageIndex) {
 		return PostStartStateResult{}, errPostStartIdentity
 	}
-	if entry.identity.MessageDigest != (common.Hash{}) {
-		if request.MessageDigest != entry.identity.MessageDigest {
+	if identity.MessageDigest != (common.Hash{}) {
+		if request.MessageDigest != identity.MessageDigest {
 			return PostStartStateResult{}, errPostStartIdentity
 		}
 	} else if request.ChildBlockHash == (common.Hash{}) {
 		return PostStartStateResult{}, errPostStartIdentity
 	}
 	if request.ExpectedNodeInstanceID != (common.Hash{}) &&
-		request.ExpectedNodeInstanceID != entry.identity.NodeInstanceID {
+		request.ExpectedNodeInstanceID != identity.NodeInstanceID {
 		return PostStartStateResult{}, errPostStartIdentity
 	}
 	if request.ExpectedNodeEpoch != 0 &&
-		request.ExpectedNodeEpoch != entry.identity.NodeEpoch {
+		request.ExpectedNodeEpoch != identity.NodeEpoch {
 		return PostStartStateResult{}, errPostStartIdentity
 	}
 	if request.ExpectedStartBlockTxHash != (common.Hash{}) &&
-		request.ExpectedStartBlockTxHash != entry.identity.StartBlockTxHash {
+		request.ExpectedStartBlockTxHash != identity.StartBlockTxHash {
 		return PostStartStateResult{}, errPostStartIdentity
 	}
 	if request.ExpectedStartBlockInputDigest != (common.Hash{}) &&
-		request.ExpectedStartBlockInputDigest != entry.identity.StartBlockInputDigest {
+		request.ExpectedStartBlockInputDigest != identity.StartBlockInputDigest {
 		return PostStartStateResult{}, errPostStartIdentity
 	}
 	if request.ChildBlockHash != (common.Hash{}) {
-		if entry.identity.ChildBlockHash == (common.Hash{}) ||
-			request.ChildBlockHash != entry.identity.ChildBlockHash ||
-			api.store.chain.GetCanonicalHash(childNumber) != entry.identity.ChildBlockHash ||
-			api.store.chain.GetCanonicalHash(childNumber-1) != entry.identity.ParentBlockHash {
+		if identity.ChildBlockHash == (common.Hash{}) ||
+			request.ChildBlockHash != identity.ChildBlockHash ||
+			api.store.canonicalHash == nil ||
+			api.store.canonicalHash(childNumber) != identity.ChildBlockHash ||
+			api.store.canonicalHash(childNumber-1) != identity.ParentBlockHash {
 			return PostStartStateResult{}, errPostStartNotCanonical
 		}
 	}
-	if api.store.chain != nil && api.store.chain.GetCanonicalHash(parentNumber) != entry.identity.ParentBlockHash {
+	if api.store.canonicalHash != nil && api.store.canonicalHash(parentNumber) != identity.ParentBlockHash {
 		return PostStartStateResult{}, errPostStartNotCanonical
 	}
 	entry.rootOnce.Do(func() {
-		rootState := entry.state.Copy()
-		entry.identity.PostStartStateRoot = rootState.IntermediateRoot(true)
+		rootState := snapshot.Copy()
+		entry.root = rootState.IntermediateRoot(true)
 		entry.rootErr = rootState.Error()
 	})
 	if entry.rootErr != nil {
 		return PostStartStateResult{}, fmt.Errorf("compute post-StartBlock state root: %w", entry.rootErr)
 	}
+	identity.PostStartStateRoot = entry.root
 	if request.ExpectedPostStartStateRoot != (common.Hash{}) &&
-		request.ExpectedPostStartStateRoot != entry.identity.PostStartStateRoot {
+		request.ExpectedPostStartStateRoot != identity.PostStartStateRoot {
 		return PostStartStateResult{}, errPostStartIdentity
 	}
-	result := PostStartStateResult{Identity: entry.identity, Environment: entry.environment}
+	result := PostStartStateResult{Identity: identity, Environment: environment}
 	for _, requested := range request.Accounts {
-		balance := entry.state.GetBalance(requested.Address).ToBig()
+		balance := snapshot.GetBalance(requested.Address).ToBig()
 		account := PostStartAccountResult{
 			Address:  requested.Address,
-			Exists:   entry.state.Exist(requested.Address),
+			Exists:   snapshot.Exist(requested.Address),
 			Balance:  (*hexutil.Big)(balance),
-			Nonce:    hexutil.Uint64(entry.state.GetNonce(requested.Address)),
-			CodeHash: entry.state.GetCodeHash(requested.Address),
+			Nonce:    hexutil.Uint64(snapshot.GetNonce(requested.Address)),
+			CodeHash: snapshot.GetCodeHash(requested.Address),
 		}
 		if requested.IncludeCode {
-			account.Code = hexutil.Bytes(entry.state.GetCode(requested.Address))
+			account.Code = hexutil.Bytes(snapshot.GetCode(requested.Address))
 		}
 		for _, key := range requested.StorageKeys {
 			account.StorageValues = append(account.StorageValues, PostStartStorageValue{
 				Key:   key,
-				Value: entry.state.GetState(requested.Address, key),
+				Value: snapshot.GetState(requested.Address, key),
 			})
 		}
 		result.Accounts = append(result.Accounts, account)
 	}
 	for _, number := range request.BlockNumbers {
-		if uint64(number) >= uint64(entry.identity.ChildBlockNumber) {
-			return PostStartStateResult{}, fmt.Errorf("BLOCKHASH number %d is not before child block %d", number, entry.identity.ChildBlockNumber)
+		if uint64(number) >= uint64(identity.ChildBlockNumber) {
+			return PostStartStateResult{}, fmt.Errorf("BLOCKHASH number %d is not before child block %d", number, identity.ChildBlockNumber)
 		}
 		result.BlockHashes = append(result.BlockHashes, PostStartBlockHashResult{
 			Number: number,
-			Hash:   api.store.chain.GetCanonicalHash(uint64(number)),
+			Hash:   api.store.canonicalHash(uint64(number)),
 		})
 	}
-	if err := entry.state.Error(); err != nil {
+	if err := snapshot.Error(); err != nil {
 		return PostStartStateResult{}, fmt.Errorf("read post-StartBlock state: %w", err)
 	}
-	if !api.store.isCurrent(uint64(entry.identity.NodeEpoch)) {
+	if !api.store.isCurrent(uint64(identity.NodeEpoch)) {
 		return PostStartStateResult{}, errPostStartIdentity
+	}
+	if api.store.canonicalHash != nil && api.store.canonicalHash(parentNumber) != identity.ParentBlockHash {
+		return PostStartStateResult{}, errPostStartNotCanonical
 	}
 	return result, nil
 }
