@@ -543,6 +543,12 @@ func CreateExecutionNode(
 		Public: false,
 	})
 	apis = append(apis, rpc.API{
+		Namespace: "rhcstate",
+		Version:   "1.0",
+		Service:   NewPostStartStateAPI(execEngine.postStartStates),
+		Public:    false,
+	})
+	apis = append(apis, rpc.API{
 		Namespace: "arbtrace",
 		Version:   "1.0",
 		Service: NewArbTraceForwarderAPI(

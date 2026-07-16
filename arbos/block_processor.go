@@ -250,6 +250,13 @@ type SequencingHooks interface {
 	TxFailed(error)
 }
 
+// StartBlockObserver receives the exact ephemeral state immediately after the
+// synthetic StartBlock transaction commits and before any user transaction.
+// Observers must not mutate the supplied StateDB.
+type StartBlockObserver interface {
+	StartBlockApplied(*types.Header, *state.StateDB, *types.Transaction)
+}
+
 type NoopSequencingHooks struct {
 	txs               types.Transactions
 	scheduledTxsCount int
@@ -300,6 +307,7 @@ func ProduceBlock(
 	isMsgForPrefetch bool,
 	runCtx *core.MessageRunContext,
 	exposeMultiGas bool,
+	startBlockObserver StartBlockObserver,
 ) (*types.Block, *state.StateDB, types.Receipts, error) {
 	chainConfig := chainContext.Config()
 	lastArbosVersion := types.DeserializeHeaderExtraInformation(lastBlockHeader).ArbOSFormatVersion
@@ -311,7 +319,7 @@ func ProduceBlock(
 	hooks := NewNoopSequencingHooks(txes)
 
 	return ProduceBlockAdvanced(
-		message.Header, delayedMessagesRead, lastBlockHeader, statedb, chainContext, hooks, isMsgForPrefetch, runCtx, exposeMultiGas, nil,
+		message.Header, delayedMessagesRead, lastBlockHeader, statedb, chainContext, hooks, isMsgForPrefetch, runCtx, exposeMultiGas, nil, startBlockObserver,
 	)
 }
 
@@ -327,6 +335,7 @@ func ProduceBlockAdvanced(
 	runCtx *core.MessageRunContext,
 	exposeMultiGas bool,
 	addressChecker state.AddressChecker,
+	startBlockObserver StartBlockObserver,
 ) (*types.Block, *state.StateDB, types.Receipts, error) {
 
 	arbState, err := arbosState.OpenSystemArbosState(statedb, nil, false)
@@ -608,6 +617,10 @@ func ProduceBlockAdvanced(
 
 		if tx.Type() == types.ArbitrumInternalTxType && result.Err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to apply internal transaction: %w", result.Err)
+		}
+
+		if tx.Type() == types.ArbitrumInternalTxType && len(buildState.complete) == 0 && startBlockObserver != nil {
+			startBlockObserver.StartBlockApplied(header, buildState.statedb, tx)
 		}
 
 		if preTxHeaderGasUsed > header.GasUsed {

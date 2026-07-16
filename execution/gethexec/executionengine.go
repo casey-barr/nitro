@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
@@ -298,6 +299,7 @@ type ExecutionEngine struct {
 	transactionFiltererRPCClient   *TransactionFiltererRPCClient
 	filteringReportRPCClient       *FilteringReportRPCClient
 	disableDelayedSequencingFilter bool
+	postStartStates                *PostStartStateStore
 }
 
 func NewL1PriceData() *L1PriceData {
@@ -331,6 +333,7 @@ func NewExecutionEngine(
 		disableDelayedSequencingFilter: disableDelayedSequencingFilter,
 		addressChecker:                 addressChecker,
 		filteringReportRPCClient:       filteringReportRPCClient,
+		postStartStates:                NewPostStartStateStore(bc, 4),
 	}
 }
 
@@ -497,6 +500,7 @@ func (s *ExecutionEngine) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newM
 	}
 
 	s.createBlocksMutex.Lock()
+	s.postStartStates.Clear()
 	resequencing := false
 	defer func() {
 		// if we are resequencing old messages - don't release the lock
@@ -760,6 +764,11 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 	statedb.StartPrefetcher("Sequencer", witness, witnessStats)
 	defer statedb.StopPrefetcher()
 	delayedMessagesRead := lastBlockHeader.Nonce.Uint64()
+	msgIdx, err := s.BlockNumberToMessageIndex(lastBlockHeader.Number.Uint64() + 1)
+	if err != nil {
+		return nil, err
+	}
+	postStartObserver := s.postStartStates.Observer(uint64(msgIdx), common.Hash{})
 
 	startTime := time.Now()
 	block, statedb, receipts, err := arbos.ProduceBlockAdvanced(
@@ -773,6 +782,7 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 		core.NewMessageSequencingContext(s.wasmTargets),
 		s.exposeMultiGas,
 		s.addressChecker,
+		postStartObserver,
 	)
 	if err != nil {
 		return nil, err
@@ -796,11 +806,6 @@ func (s *ExecutionEngine) sequenceTransactionsWithBlockMutex(header *arbostypes.
 	}
 
 	msg, err := hooks.MessageFromTxes(header)
-	if err != nil {
-		return nil, err
-	}
-
-	msgIdx, err := s.BlockNumberToMessageIndex(lastBlockHeader.Number.Uint64() + 1)
 	if err != nil {
 		return nil, err
 	}
@@ -976,6 +981,15 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 	default:
 		runCtx = core.NewMessageCommitContext(s.wasmTargets)
 	}
+	var postStartObserver arbos.StartBlockObserver
+	if !isMsgForPrefetch {
+		msgIdx, err := s.BlockNumberToMessageIndex(currentHeader.Number.Uint64() + 1)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		messageDigest := crypto.Keccak256Hash(msg.Message.L2msg)
+		postStartObserver = s.postStartStates.Observer(uint64(msgIdx), messageDigest)
+	}
 
 	// For delayed message sequencing, we use DelayedFilteringSequencingHooks which can
 	// halt on filtered addresses. This duplicates logic from arbos.ProduceBlock but with
@@ -1006,6 +1020,7 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 			runCtx,
 			s.exposeMultiGas,
 			s.addressChecker,
+			postStartObserver,
 		)
 		if err != nil {
 			return nil, nil, nil, err
@@ -1051,6 +1066,7 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		isMsgForPrefetch,
 		runCtx,
 		s.exposeMultiGas,
+		postStartObserver,
 	)
 
 	return block, statedb, receipts, err
@@ -1079,6 +1095,7 @@ func (s *ExecutionEngine) appendBlock(block *types.Block, statedb *state.StateDB
 		}
 	}
 	blockWriteToDbTimer.Update(time.Since(startTime).Nanoseconds())
+	s.postStartStates.MarkCanonical(block)
 	baseFeeGauge.Update(block.BaseFee().Int64())
 	txCountHistogram.Update(int64(len(block.Transactions()) - 1))
 	var blockGasused uint64
