@@ -162,17 +162,26 @@ func (s *PostStartStateStore) retain(entry *postStartStateEntry) {
 }
 
 func (s *PostStartStateStore) MarkCanonical(block *types.Block) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	var matching *postStartStateEntry
 	for _, entry := range s.entries {
 		if uint64(entry.identity.ChildBlockNumber) == block.NumberU64() &&
 			entry.identity.ParentBlockHash == block.ParentHash() {
-			entry.mu.Lock()
-			entry.identity.ChildBlockHash = block.Hash()
-			entry.mu.Unlock()
-			return
+			matching = entry
+			break
 		}
 	}
+	s.mu.RUnlock()
+	if matching == nil {
+		return
+	}
+
+	matching.mu.Lock()
+	defer matching.mu.Unlock()
+	if !s.isCurrent(uint64(matching.identity.NodeEpoch)) {
+		return
+	}
+	matching.identity.ChildBlockHash = block.Hash()
 }
 
 func (s *PostStartStateStore) Clear() {

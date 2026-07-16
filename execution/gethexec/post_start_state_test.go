@@ -8,6 +8,7 @@ import (
 	"errors"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -73,6 +74,48 @@ func TestPostStartStateStoreCanonicalEnrichment(t *testing.T) {
 	store.MarkCanonical(block)
 	if entry.identity.ChildBlockHash != block.Hash() {
 		t.Fatal("expected retained ephemeral identity to gain the canonical child hash")
+	}
+}
+
+func TestPostStartStateStoreCanonicalEnrichmentDoesNotBlockEpochReads(t *testing.T) {
+	store := NewPostStartStateStore(nil, 1)
+	entry := testPostStartEntry(1, 2)
+	store.retain(entry)
+	block := types.NewBlockWithHeader(&types.Header{
+		ParentHash: entry.identity.ParentBlockHash,
+		Number:     new(big.Int).SetUint64(2),
+	})
+
+	entry.mu.Lock()
+	store.mu.Lock()
+	started := make(chan struct{})
+	marked := make(chan struct{})
+	go func() {
+		close(started)
+		store.MarkCanonical(block)
+		close(marked)
+	}()
+	<-started
+	store.mu.Unlock()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		if store.mu.TryLock() {
+			store.mu.Unlock()
+			break
+		}
+		if time.Now().After(deadline) {
+			entry.mu.Unlock()
+			t.Fatal("canonical enrichment held the store lock while waiting for an entry")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	entry.mu.Unlock()
+
+	select {
+	case <-marked:
+	case <-time.After(time.Second):
+		t.Fatal("canonical enrichment did not complete")
 	}
 }
 
