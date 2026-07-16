@@ -257,6 +257,28 @@ type StartBlockObserver interface {
 	StartBlockApplied(*types.Header, *state.StateDB, *types.Transaction)
 }
 
+func observeStartBlock(
+	observer StartBlockObserver,
+	header *types.Header,
+	statedb *state.StateDB,
+	tx *types.Transaction,
+	completedTransactions int,
+) {
+	if observer == nil || completedTransactions != 0 || tx.Type() != types.ArbitrumInternalTxType {
+		return
+	}
+	internal, ok := tx.GetInner().(*types.ArbitrumInternalTx)
+	if !ok || len(internal.Data) < len(InternalTxStartBlockMethodID) {
+		return
+	}
+	var selector [4]byte
+	copy(selector[:], internal.Data[:4])
+	if selector != InternalTxStartBlockMethodID {
+		return
+	}
+	observer.StartBlockApplied(header, statedb, tx)
+}
+
 type NoopSequencingHooks struct {
 	txs               types.Transactions
 	scheduledTxsCount int
@@ -619,9 +641,7 @@ func ProduceBlockAdvanced(
 			return nil, nil, nil, fmt.Errorf("failed to apply internal transaction: %w", result.Err)
 		}
 
-		if tx.Type() == types.ArbitrumInternalTxType && len(buildState.complete) == 0 && startBlockObserver != nil {
-			startBlockObserver.StartBlockApplied(header, buildState.statedb, tx)
-		}
+		observeStartBlock(startBlockObserver, header, buildState.statedb, tx, len(buildState.complete))
 
 		if preTxHeaderGasUsed > header.GasUsed {
 			return nil, nil, nil, fmt.Errorf("ApplyTransaction() used -%v gas", preTxHeaderGasUsed-header.GasUsed)
