@@ -13,6 +13,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -36,6 +37,7 @@ type PostStartStateIdentity struct {
 	// locally sequenced blocks until canonical child-hash enrichment.
 	MessageDigest         common.Hash    `json:"messageDigest"`
 	ParentBlockHash       common.Hash    `json:"parentBlockHash"`
+	ParentBlockNumber     hexutil.Uint64 `json:"parentBlockNumber"`
 	ParentStateRoot       common.Hash    `json:"parentStateRoot"`
 	ChildBlockNumber      hexutil.Uint64 `json:"childBlockNumber"`
 	ChildBlockHash        common.Hash    `json:"childBlockHash"`
@@ -48,12 +50,25 @@ type PostStartStateIdentity struct {
 	CaptureLatencyNanos   hexutil.Uint64 `json:"captureLatencyNanos"`
 }
 
+type PostStartExecutionEnvironment struct {
+	L1BlockNumber hexutil.Uint64 `json:"l1BlockNumber"`
+	Timestamp     hexutil.Uint64 `json:"timestamp"`
+	GasLimit      hexutil.Uint64 `json:"gasLimit"`
+	BaseFeePerGas *hexutil.Big   `json:"baseFeePerGas"`
+	Beneficiary   common.Address `json:"beneficiary"`
+	Difficulty    *hexutil.Big   `json:"difficulty"`
+	PrevRandao    common.Hash    `json:"prevrandao"`
+	ExcessBlobGas hexutil.Uint64 `json:"excessBlobGas"`
+	BlobBaseFee   *hexutil.Big   `json:"blobBaseFee"`
+}
+
 type postStartStateEntry struct {
-	mu       sync.Mutex
-	rootOnce sync.Once
-	rootErr  error
-	identity PostStartStateIdentity
-	state    *state.StateDB
+	mu          sync.Mutex
+	rootOnce    sync.Once
+	rootErr     error
+	identity    PostStartStateIdentity
+	environment PostStartExecutionEnvironment
+	state       *state.StateDB
 }
 
 // PostStartStateStore retains a small, in-memory window of exact StateDB copies
@@ -119,6 +134,20 @@ func (s *PostStartStateStore) capture(nodeEpoch uint64, messageIndex uint64, mes
 		return
 	}
 	chainID := (*hexutil.Big)(new(big.Int).Set(s.chain.Config().ChainID))
+	headerExtra := types.DeserializeHeaderExtraInformation(header)
+	baseFee := new(big.Int)
+	if header.BaseFee != nil {
+		baseFee.Set(header.BaseFee)
+	}
+	difficulty := new(big.Int)
+	if header.Difficulty != nil {
+		difficulty.Set(header.Difficulty)
+	}
+	excessBlobGas := uint64(0)
+	if header.ExcessBlobGas != nil {
+		excessBlobGas = *header.ExcessBlobGas
+	}
+	blobBaseFee := eip4844.CalcBlobFee(s.chain.Config(), header)
 	entry := &postStartStateEntry{
 		identity: PostStartStateIdentity{
 			ChainID:               chainID,
@@ -127,14 +156,26 @@ func (s *PostStartStateStore) capture(nodeEpoch uint64, messageIndex uint64, mes
 			MessageIndex:          hexutil.Uint64(messageIndex),
 			MessageDigest:         messageDigest,
 			ParentBlockHash:       header.ParentHash,
+			ParentBlockNumber:     hexutil.Uint64(parent.Number.Uint64()),
 			ParentStateRoot:       parent.Root,
 			ChildBlockNumber:      hexutil.Uint64(header.Number.Uint64()),
 			StartBlockTxHash:      tx.Hash(),
 			StartBlockInputDigest: crypto.Keccak256Hash(tx.Data()),
 			StartBlockTxType:      hexutil.Uint64(tx.Type()),
 			StartBlockTxIndex:     0,
-			ArbOSVersion:          hexutil.Uint64(types.DeserializeHeaderExtraInformation(header).ArbOSFormatVersion),
+			ArbOSVersion:          hexutil.Uint64(headerExtra.ArbOSFormatVersion),
 			CaptureLatencyNanos:   hexutil.Uint64(time.Since(start).Nanoseconds()),
+		},
+		environment: PostStartExecutionEnvironment{
+			L1BlockNumber: hexutil.Uint64(headerExtra.L1BlockNumber),
+			Timestamp:     hexutil.Uint64(header.Time),
+			GasLimit:      hexutil.Uint64(header.GasLimit),
+			BaseFeePerGas: (*hexutil.Big)(baseFee),
+			Beneficiary:   header.Coinbase,
+			Difficulty:    (*hexutil.Big)(difficulty),
+			PrevRandao:    header.MixDigest,
+			ExcessBlobGas: hexutil.Uint64(excessBlobGas),
+			BlobBaseFee:   (*hexutil.Big)(blobBaseFee),
 		},
 		state: snapshot,
 	}
@@ -210,6 +251,22 @@ func (s *PostStartStateStore) get(parentHash common.Hash, childNumber uint64) (*
 	return nil, errPostStartStateNotFound
 }
 
+func (s *PostStartStateStore) getByMessage(messageIndex uint64, messageDigest common.Hash) (*postStartStateEntry, error) {
+	if messageDigest == (common.Hash{}) {
+		return nil, errPostStartIdentity
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := len(s.entries) - 1; i >= 0; i-- {
+		entry := s.entries[i]
+		if uint64(entry.identity.MessageIndex) == messageIndex &&
+			entry.identity.MessageDigest == messageDigest {
+			return entry, nil
+		}
+	}
+	return nil, errPostStartStateNotFound
+}
+
 type PostStartAccountRequest struct {
 	Address     common.Address `json:"address"`
 	StorageKeys []common.Hash  `json:"storageKeys"`
@@ -252,9 +309,10 @@ type PostStartBlockHashResult struct {
 }
 
 type PostStartStateResult struct {
-	Identity    PostStartStateIdentity     `json:"identity"`
-	Accounts    []PostStartAccountResult   `json:"accounts"`
-	BlockHashes []PostStartBlockHashResult `json:"blockHashes"`
+	Identity    PostStartStateIdentity         `json:"identity"`
+	Environment PostStartExecutionEnvironment `json:"environment"`
+	Accounts    []PostStartAccountResult       `json:"accounts"`
+	BlockHashes []PostStartBlockHashResult     `json:"blockHashes"`
 }
 
 type PostStartStateAPI struct {
@@ -276,7 +334,7 @@ func (api *PostStartStateAPI) GetBatch(ctx context.Context, request PostStartSta
 }
 
 func (api *PostStartStateAPI) getBatch(request PostStartStateRequest) (PostStartStateResult, error) {
-	entry, err := api.store.get(request.ParentBlockHash, uint64(request.ChildBlockNumber))
+	entry, err := api.store.getByMessage(uint64(request.MessageIndex), request.MessageDigest)
 	if err != nil {
 		return PostStartStateResult{}, err
 	}
@@ -297,6 +355,13 @@ func (api *PostStartStateAPI) getBatch(request PostStartStateRequest) (PostStart
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 	childNumber := uint64(entry.identity.ChildBlockNumber)
+	parentNumber := uint64(entry.identity.ParentBlockNumber)
+	if request.ParentBlockHash != (common.Hash{}) && request.ParentBlockHash != entry.identity.ParentBlockHash {
+		return PostStartStateResult{}, errPostStartIdentity
+	}
+	if request.ChildBlockNumber != 0 && request.ChildBlockNumber != entry.identity.ChildBlockNumber {
+		return PostStartStateResult{}, errPostStartIdentity
+	}
 	if uint64(request.MessageIndex) != uint64(entry.identity.MessageIndex) {
 		return PostStartStateResult{}, errPostStartIdentity
 	}
@@ -331,6 +396,9 @@ func (api *PostStartStateAPI) getBatch(request PostStartStateRequest) (PostStart
 			return PostStartStateResult{}, errPostStartNotCanonical
 		}
 	}
+	if api.store.chain != nil && api.store.chain.GetCanonicalHash(parentNumber) != entry.identity.ParentBlockHash {
+		return PostStartStateResult{}, errPostStartNotCanonical
+	}
 	entry.rootOnce.Do(func() {
 		rootState := entry.state.Copy()
 		entry.identity.PostStartStateRoot = rootState.IntermediateRoot(true)
@@ -343,7 +411,7 @@ func (api *PostStartStateAPI) getBatch(request PostStartStateRequest) (PostStart
 		request.ExpectedPostStartStateRoot != entry.identity.PostStartStateRoot {
 		return PostStartStateResult{}, errPostStartIdentity
 	}
-	result := PostStartStateResult{Identity: entry.identity}
+	result := PostStartStateResult{Identity: entry.identity, Environment: entry.environment}
 	for _, requested := range request.Accounts {
 		balance := entry.state.GetBalance(requested.Address).ToBig()
 		account := PostStartAccountResult{

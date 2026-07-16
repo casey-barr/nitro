@@ -19,11 +19,33 @@ import (
 func testPostStartEntry(parent uint64, child uint64) *postStartStateEntry {
 	return &postStartStateEntry{
 		identity: PostStartStateIdentity{
-			ParentBlockHash:  common.BigToHash(new(big.Int).SetUint64(parent)),
-			ChildBlockNumber: hexutil.Uint64(child),
-			MessageIndex:     hexutil.Uint64(child),
-			NodeEpoch:        1,
+			ParentBlockHash:   common.BigToHash(new(big.Int).SetUint64(parent)),
+			ParentBlockNumber: hexutil.Uint64(parent),
+			ChildBlockNumber:  hexutil.Uint64(child),
+			MessageIndex:      hexutil.Uint64(child),
+			NodeEpoch:         1,
 		},
+	}
+}
+
+func TestPostStartStateStoreDiscoversByExactMessageIdentity(t *testing.T) {
+	store := NewPostStartStateStore(nil, 2)
+	first := testPostStartEntry(1, 2)
+	first.identity.MessageDigest = common.HexToHash("0x1234")
+	second := testPostStartEntry(2, 3)
+	second.identity.MessageDigest = common.HexToHash("0x5678")
+	store.retain(first)
+	store.retain(second)
+
+	found, err := store.getByMessage(2, first.identity.MessageDigest)
+	if err != nil || found != first {
+		t.Fatalf("expected exact feed identity to discover first retained frame, got %p %v", found, err)
+	}
+	if _, err := store.getByMessage(2, second.identity.MessageDigest); !errors.Is(err, errPostStartStateNotFound) {
+		t.Fatalf("expected cross-frame digest to fail closed, got %v", err)
+	}
+	if _, err := store.getByMessage(2, common.Hash{}); !errors.Is(err, errPostStartIdentity) {
+		t.Fatalf("expected zero discovery digest to fail closed, got %v", err)
 	}
 }
 
@@ -66,6 +88,7 @@ func TestPostStartStateStoreClear(t *testing.T) {
 func TestPostStartStateStoreCanonicalEnrichment(t *testing.T) {
 	store := NewPostStartStateStore(nil, 1)
 	entry := testPostStartEntry(1, 2)
+	entry.identity.MessageDigest = common.HexToHash("0x1234")
 	store.retain(entry)
 	block := types.NewBlockWithHeader(&types.Header{
 		ParentHash: entry.identity.ParentBlockHash,
@@ -135,6 +158,8 @@ func TestPostStartStateAPIBoundsReads(t *testing.T) {
 	request := PostStartStateRequest{
 		ParentBlockHash:  entry.identity.ParentBlockHash,
 		ChildBlockNumber: entry.identity.ChildBlockNumber,
+		MessageIndex:     entry.identity.MessageIndex,
+		MessageDigest:    entry.identity.MessageDigest,
 		Accounts:         make([]PostStartAccountRequest, 4097),
 	}
 	if _, err := api.getBatch(request); err == nil {
@@ -150,6 +175,17 @@ func TestPostStartStateAPIServesExactEphemeralBinding(t *testing.T) {
 	store := NewPostStartStateStore(nil, 1)
 	entry := testPostStartEntry(1, 2)
 	entry.identity.MessageDigest = common.HexToHash("0x1234")
+	entry.environment = PostStartExecutionEnvironment{
+		L1BlockNumber: 7,
+		Timestamp:     100,
+		GasLimit:      30_000_000,
+		BaseFeePerGas: (*hexutil.Big)(big.NewInt(100_000_000)),
+		Beneficiary:   common.HexToAddress("0x42"),
+		Difficulty:    (*hexutil.Big)(new(big.Int)),
+		PrevRandao:    common.HexToHash("0x43"),
+		ExcessBlobGas: 123,
+		BlobBaseFee:   (*hexutil.Big)(big.NewInt(456)),
+	}
 	entry.state = statedb
 	store.retain(entry)
 	api := NewPostStartStateAPI(store)
@@ -169,6 +205,16 @@ func TestPostStartStateAPIServesExactEphemeralBinding(t *testing.T) {
 	if result.Identity.PostStartStateRoot == (common.Hash{}) {
 		t.Fatal("ephemeral result must include the exact post-StartBlock state root")
 	}
+	if uint64(result.Environment.L1BlockNumber) != 7 || uint64(result.Environment.Timestamp) != 100 ||
+		uint64(result.Environment.ExcessBlobGas) != 123 || (*big.Int)(result.Environment.BlobBaseFee).Uint64() != 456 {
+		t.Fatalf("expected retained execution environment, got %+v", result.Environment)
+	}
+
+	request.ParentBlockHash = common.HexToHash("0x9999")
+	if _, err := api.getBatch(request); !errors.Is(err, errPostStartIdentity) {
+		t.Fatalf("expected optional parent expectation mismatch refusal, got %v", err)
+	}
+	request.ParentBlockHash = entry.identity.ParentBlockHash
 
 	request.MessageDigest = common.HexToHash("0x5678")
 	if _, err := api.getBatch(request); !errors.Is(err, errPostStartIdentity) {
