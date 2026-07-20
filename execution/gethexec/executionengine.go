@@ -1239,6 +1239,16 @@ func (s *ExecutionEngine) cacheL1PriceDataOfMsg(msgIdx arbutil.MessageIndex, blo
 	}
 }
 
+func (s *ExecutionEngine) residentObserverForDigest(messageIndex uint64, messageDigest common.Hash, currentHeader *types.Header) (*residentPostStartObserver, error) {
+	if !s.residentPostStartEnabled {
+		return nil, nil
+	}
+	childNumber := new(big.Int).Add(new(big.Int).Set(currentHeader.Number), big.NewInt(1))
+	arbOSVersion := types.DeserializeHeaderExtraInformation(currentHeader).ArbOSFormatVersion
+	signer := types.MakeSigner(s.bc.Config(), childNumber, currentHeader.Time, arbOSVersion)
+	return s.residentPostStartStates.Observer(messageIndex, messageDigest, signer)
+}
+
 // DigestMessage is used to create a block by executing msg against the latest state and storing it.
 // Also, while creating a block by executing msg against the latest state,
 // in parallel, creates a block by executing msgForPrefetch (msg+1) against the latest state
@@ -1275,15 +1285,9 @@ func (s *ExecutionEngine) digestMessageWithBlockMutex(msgIdxToDigest arbutil.Mes
 		}()
 	}
 
-	var residentObserver *residentPostStartObserver
-	if s.residentPostStartEnabled {
-		childNumber := new(big.Int).Add(new(big.Int).Set(currentHeader.Number), big.NewInt(1))
-		arbOSVersion := types.DeserializeHeaderExtraInformation(currentHeader).ArbOSFormatVersion
-		signer := types.MakeSigner(s.bc.Config(), childNumber, currentHeader.Time, arbOSVersion)
-		residentObserver, err = s.residentPostStartStates.Observer(uint64(msgIdxToDigest), crypto.Keccak256Hash(msg.Message.L2msg), signer)
-		if err != nil {
-			return nil, err
-		}
+	residentObserver, err := s.residentObserverForDigest(uint64(msgIdxToDigest), crypto.Keccak256Hash(msg.Message.L2msg), currentHeader)
+	if err != nil {
+		return nil, err
 	}
 	var block *types.Block
 	var statedb *state.StateDB
