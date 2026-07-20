@@ -57,3 +57,11 @@ func DecodeFrame(data []byte) (Frame, error) {
 func crc32c(data []byte) uint32 { var crc uint32 = 0xffffffff; for _, b := range data { crc ^= uint32(b); for i:=0;i<8;i++ { mask := uint32(0) - (crc & 1); crc = (crc >> 1) ^ (0x82f63b78 & mask) } }; return ^crc }
 
 
+
+func ReassembleFrames(frames [][]byte) ([]byte, error) {
+ if len(frames)==0 { return nil, errors.New("empty frame set") }
+ decoded:=make([]Frame,len(frames)); for i,b:=range frames { f,e:=DecodeFrame(b); if e!=nil{return nil,e}; decoded[i]=f }
+ first:=decoded[0]; if first.ChunkCount!=uint32(len(frames)){return nil,errors.New("incomplete chunk set")}
+ out:=make([][]byte,len(frames)); for _,f:=range decoded { if f.ChunkCount!=first.ChunkCount||f.LogicalSequence!=first.LogicalSequence||f.TransportSequence!=first.TransportSequence||f.GapEpoch!=first.GapEpoch||f.ChunkIndex>=first.ChunkCount{return nil,errors.New("chunk identity mismatch")}; if out[f.ChunkIndex]!=nil{return nil,errors.New("duplicate chunk")}; out[f.ChunkIndex]=f.Payload }
+ var joined []byte; for i,p:=range out {if p==nil{return nil,errors.New("missing chunk")}; if i==0 {joined=append(joined,p...)} else {joined=append(joined,p...)} }; return joined,nil
+}
