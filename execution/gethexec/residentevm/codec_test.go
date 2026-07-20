@@ -17,10 +17,11 @@ func TestLogicalRoundTripDeterministic(t *testing.T) {
 func TestFrameRoundTripAndChecksum(t *testing.T) {
 	payload, err := MarshalLogical(&ResidentEvmDeltaV1{Kind: DeltaKindGap})
 	if err != nil { t.Fatal(err) }
-	f, err := EncodeFrame(Frame{LogicalSequence: 4, Payload: payload})
+	f, err := EncodeFrame(Frame{WireVersion: 1, SchemaVersion: 1, ChunkCount: 1, LogicalSequence: 4, Payload: payload})
 	if err != nil { t.Fatal(err) }
 	got, err := DecodeFrame(f)
 	if err != nil || !bytes.Equal(got.Payload, payload) { t.Fatalf("frame: %v", err) }
 	f[len(f)-1] ^= 1
 	if _, err := DecodeFrame(f); err == nil { t.Fatal("checksum corruption accepted") }
 }
+
