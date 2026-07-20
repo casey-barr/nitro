@@ -1,0 +1,6 @@
+syntax = "proto3";
+package residentevm;
+option go_package = "github.com/OffchainLabs/nitro/execution/gethexec/residentevm";
+
+message ResidentEvmDeltaV1 { uint32 kind = 1; uint64 logical_sequence = 2; repeated Mutation mutations = 3; }
+message Mutation { bytes address = 1; bytes slot = 2; bytes value = 3; bool deleted = 4; }
