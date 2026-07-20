@@ -36,7 +36,7 @@ func TestResidentPostStartObserverDeduplicatesSendersInFirstOccurrenceOrder(t *t
 	observer, err := store.Observer(17, digest, signer)
 	if err != nil { t.Fatal(err) }
 	header := &types.Header{Number: big.NewInt(2), ParentHash: common.HexToHash("0x99")}
-	observer.StartBlockAppliedWithTransactions(header, db, nil, types.Transactions{txA, txB, txA})
+	observer.StartBlockAppliedWithTransactions(header, db, nil, types.Transactions{txA, txB, txA}, true)
 	if observer.Error() != nil { t.Fatal(observer.Error()) }
 	if _, ok := store.LatestCanonical(); ok { t.Fatal("pending resident state became visible before canonical append") }
 	block := types.NewBlock(header, &types.Body{}, nil, trie.NewStackTrie(nil))
@@ -52,7 +52,7 @@ func TestResidentPostStartObserverFailsClosedOnMissingTransactionPrefix(t *testi
 	store := NewResidentPostStartStateStore()
 	observer, err := store.Observer(1, common.HexToHash("0x1"), types.LatestSigner(params.AllEthashProtocolChanges))
 	if err != nil { t.Fatal(err) }
-	observer.StartBlockAppliedWithTransactions(&types.Header{Number: big.NewInt(1)}, nil, nil, nil)
+	observer.StartBlockAppliedWithTransactions(&types.Header{Number: big.NewInt(1)}, nil, nil, nil, true)
 	if observer.Error() == nil { t.Fatal("missing parsed transaction prefix was accepted") }
 	if _, ok := store.LatestCanonical(); ok { t.Fatal("failed observer retained a record") }
 }

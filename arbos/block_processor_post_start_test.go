@@ -41,7 +41,7 @@ func TestObserveStartBlockCapturesExactStartBlockSelector(t *testing.T) {
 
 	tx := internalTransaction(InternalTxStartBlockMethodID)
 	observer := &recordingStartBlockObserver{}
-	observeStartBlock(observer, nil, nil, tx, 0, nil)
+	observeStartBlock(observer, nil, nil, tx, 0, nil, false)
 
 	if observer.calls != 1 || observer.tx != tx {
 		t.Fatal("exact StartBlock internal transaction was not captured")
@@ -57,7 +57,7 @@ func TestObserveStartBlockRejectsDifferentInternalMethod(t *testing.T) {
 
 	tx := internalTransaction([4]byte{0x05, 0x06, 0x07, 0x08})
 	observer := &recordingStartBlockObserver{}
-	observeStartBlock(observer, nil, nil, tx, 0, nil)
+	observeStartBlock(observer, nil, nil, tx, 0, nil, false)
 
 	if observer.calls != 0 {
 		t.Fatal("non-StartBlock internal transaction was captured")
@@ -68,6 +68,7 @@ func TestObserveStartBlockRejectsDifferentInternalMethod(t *testing.T) {
 type recordingRichStartBlockObserver struct {
 	recordingStartBlockObserver
 	txs types.Transactions
+	authoritative bool
 }
 
 func (observer *recordingRichStartBlockObserver) StartBlockAppliedWithTransactions(
@@ -75,8 +76,10 @@ func (observer *recordingRichStartBlockObserver) StartBlockAppliedWithTransactio
 	statedb *state.StateDB,
 	tx *types.Transaction,
 	txs types.Transactions,
+	authoritative bool,
 ) {
 	observer.StartBlockApplied(header, statedb, tx)
+	observer.authoritative = authoritative
 	observer.txs = txs
 }
 
@@ -88,8 +91,8 @@ func TestObserveStartBlockPassesExactParsedTransactionsToRichObserver(t *testing
 	user := types.NewTx(&types.LegacyTx{Nonce: 1})
 	observer := &recordingRichStartBlockObserver{}
 	parsed := types.Transactions{user}
-	observeStartBlock(observer, nil, nil, start, 0, parsed)
-	if len(observer.txs) != 1 || observer.txs[0] != user {
+	observeStartBlock(observer, nil, nil, start, 0, parsed, true)
+	if !observer.authoritative || len(observer.txs) != 1 || observer.txs[0] != user {
 		t.Fatal("rich observer did not receive the exact parsed transaction slice")
 	}
 }
@@ -99,7 +102,7 @@ func TestObserveStartBlockRichObserverReceivesNilOnLegacyCall(t *testing.T) {
 	t.Cleanup(func() { InternalTxStartBlockMethodID = originalSelector })
 	InternalTxStartBlockMethodID = [4]byte{0x01, 0x02, 0x03, 0x04}
 	observer := &recordingRichStartBlockObserver{}
-	observeStartBlock(observer, nil, nil, internalTransaction(InternalTxStartBlockMethodID), 0, nil)
+	observeStartBlock(observer, nil, nil, internalTransaction(InternalTxStartBlockMethodID), 0, nil, false)
 	if observer.txs != nil {
 		t.Fatal("legacy observer call unexpectedly supplied a transaction prefix")
 	}

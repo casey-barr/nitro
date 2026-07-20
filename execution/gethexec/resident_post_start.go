@@ -124,12 +124,12 @@ func (o *combinedStartBlockObserver) StartBlockApplied(header *types.Header, sta
 	}
 }
 
-func (o *combinedStartBlockObserver) StartBlockAppliedWithTransactions(header *types.Header, statedb *state.StateDB, tx *types.Transaction, txes types.Transactions) {
+func (o *combinedStartBlockObserver) StartBlockAppliedWithTransactions(header *types.Header, statedb *state.StateDB, tx *types.Transaction, txes types.Transactions, authoritative bool) {
 	if o.retained != nil {
 		o.retained.StartBlockApplied(header, statedb, tx)
 	}
 	if o.resident != nil {
-		o.resident.StartBlockAppliedWithTransactions(header, statedb, tx, txes)
+		o.resident.StartBlockAppliedWithTransactions(header, statedb, tx, txes, authoritative)
 	}
 }
 
@@ -143,11 +143,11 @@ type residentPostStartObserver struct {
 // StartBlockApplied preserves the base observer interface. The richer method
 // is selected by arbos when ProduceBlock has the exact parsed tx prefix.
 func (o *residentPostStartObserver) StartBlockApplied(header *types.Header, statedb *state.StateDB, tx *types.Transaction) {
-	o.StartBlockAppliedWithTransactions(header, statedb, tx, nil)
+	o.StartBlockAppliedWithTransactions(header, statedb, tx, nil, false)
 }
 
-func (o *residentPostStartObserver) StartBlockAppliedWithTransactions(header *types.Header, statedb *state.StateDB, _ *types.Transaction, txes types.Transactions) {
-	if header == nil || statedb == nil || txes == nil {
+func (o *residentPostStartObserver) StartBlockAppliedWithTransactions(header *types.Header, statedb *state.StateDB, _ *types.Transaction, txes types.Transactions, authoritative bool) {
+	if header == nil || statedb == nil || !authoritative {
 		o.setError(errResidentSenderRead)
 		return
 	}
