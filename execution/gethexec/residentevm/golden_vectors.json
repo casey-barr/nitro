@@ -1,0 +1,15 @@
+{
+  "schema": "rhc-resident-evm-delta-v1|oneof-records-v1",
+  "records": [
+    {"name":"Hello","oneof_field":10},
+    {"name":"PostStartBlockWithSenders","oneof_field":11},
+    {"name":"IncludedTransaction","oneof_field":12},
+    {"name":"IncludedGroup","oneof_field":13},
+    {"name":"MessageCommitted","oneof_field":14},
+    {"name":"BuildAborted","oneof_field":15},
+    {"name":"Gap","oneof_field":16},
+    {"name":"Reorg","oneof_field":17},
+    {"name":"EpochReset","oneof_field":18}
+  ],
+  "wire": {"magic":"52484345564d3031","byte_order":"big","checksum":"crc32c","digest":"sha256"}
+}
