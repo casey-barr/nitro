@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"path"
 	"runtime/pprof"
@@ -300,6 +301,7 @@ type ExecutionEngine struct {
 	filteringReportRPCClient       *FilteringReportRPCClient
 	disableDelayedSequencingFilter bool
 	postStartStates                *PostStartStateStore
+	residentPostStartStates        *ResidentPostStartStateStore
 }
 
 func NewL1PriceData() *L1PriceData {
@@ -334,6 +336,7 @@ func NewExecutionEngine(
 		addressChecker:                 addressChecker,
 		filteringReportRPCClient:       filteringReportRPCClient,
 		postStartStates:                NewPostStartStateStore(bc, 4),
+		residentPostStartStates:        NewResidentPostStartStateStore(),
 	}
 }
 
@@ -937,7 +940,7 @@ func (s *ExecutionEngine) MessageIndexToBlockNumber(msgIdx arbutil.MessageIndex)
 // a delayed-inbox message (called by sequenceDelayedMessageWithBlockMutex).
 // Regular live sequencing of directly-received L2 transactions (which happens
 // in sequenceTransactionsWithBlockMutex) does not go through this function.
-func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWithMetadata, isMsgForPrefetch bool, isDelayedSequencing bool) (*types.Block, *state.StateDB, types.Receipts, error) {
+func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWithMetadata, isMsgForPrefetch bool, isDelayedSequencing bool, residentObservers ...*residentPostStartObserver) (*types.Block, *state.StateDB, types.Receipts, error) {
 	currentHeader := s.bc.CurrentBlock()
 	if currentHeader == nil {
 		return nil, nil, nil, errors.New("failed to get current block header")
@@ -989,6 +992,9 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		}
 		messageDigest := crypto.Keccak256Hash(msg.Message.L2msg)
 		postStartObserver = s.postStartStates.Observer(uint64(msgIdx), messageDigest)
+	}
+	if len(residentObservers) > 0 && residentObservers[0] != nil {
+		postStartObserver = &combinedStartBlockObserver{retained: postStartObserver, resident: residentObservers[0]}
 	}
 
 	// For delayed message sequencing, we use DelayedFilteringSequencingHooks which can
@@ -1054,6 +1060,11 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 				DelayedMsgIdx: msg.DelayedMessagesRead - 1,
 			}
 		}
+		if len(residentObservers) > 0 && residentObservers[0] != nil {
+			if residentErr := residentObservers[0].Error(); residentErr != nil {
+				return nil, nil, nil, residentErr
+			}
+		}
 		return block, statedb, receipts, nil
 	}
 
@@ -1068,7 +1079,9 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		s.exposeMultiGas,
 		postStartObserver,
 	)
-
+	if err == nil && len(residentObservers) > 0 && residentObservers[0] != nil {
+		err = residentObservers[0].Error()
+	}
 	return block, statedb, receipts, err
 }
 
@@ -1261,7 +1274,14 @@ func (s *ExecutionEngine) digestMessageWithBlockMutex(msgIdxToDigest arbutil.Mes
 		}()
 	}
 
-	block, statedb, receipts, err := s.createBlockFromNextMessage(msg, false, false)
+	childNumber := new(big.Int).Add(new(big.Int).Set(currentHeader.Number), big.NewInt(1))
+	arbOSVersion := types.DeserializeHeaderExtraInformation(currentHeader).ArbOSFormatVersion
+	signer := types.MakeSigner(s.bc.Config(), childNumber, currentHeader.Time, arbOSVersion)
+	residentObserver, err := s.residentPostStartStates.Observer(uint64(msgIdxToDigest), crypto.Keccak256Hash(msg.Message.L2msg), signer)
+	if err != nil {
+		return nil, err
+	}
+	block, statedb, receipts, err := s.createBlockFromNextMessage(msg, false, false, residentObserver)
 	if err != nil {
 		return nil, err
 	}
@@ -1272,6 +1292,7 @@ func (s *ExecutionEngine) digestMessageWithBlockMutex(msgIdxToDigest arbutil.Mes
 	if err != nil {
 		return nil, err
 	}
+	s.residentPostStartStates.MarkCanonical(block)
 	s.cacheL1PriceDataOfMsg(msgIdxToDigest, block, false)
 
 	if time.Now().After(s.nextScheduledVersionCheck) {
