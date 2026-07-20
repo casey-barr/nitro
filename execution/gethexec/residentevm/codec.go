@@ -22,24 +22,22 @@ const (
 	DeltaKindEpochReset
 )
 
-type Mutation struct { Address []byte `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`; Slot []byte `protobuf:"bytes,2,opt,name=slot,proto3" json:"slot,omitempty"`; Value []byte `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`; Deleted bool `protobuf:"varint,4,opt,name=deleted,proto3" json:"deleted,omitempty"` }
-type ResidentEvmDeltaV1 struct { Kind DeltaKind `protobuf:"varint,1,opt,name=kind,proto3" json:"kind,omitempty"`; LogicalSequence uint64 `protobuf:"varint,2,opt,name=logical_sequence,json=logicalSequence,proto3" json:"logical_sequence,omitempty"`; Mutations []*Mutation `protobuf:"bytes,3,rep,name=mutations,proto3" json:"mutations,omitempty"`; WireVersion uint32 `protobuf:"varint,4,opt,name=wire_version,json=wireVersion,proto3" json:"wire_version,omitempty"`; SchemaHash []byte `protobuf:"bytes,5,opt,name=schema_hash,json=schemaHash,proto3" json:"schema_hash,omitempty"`; NodeInstanceID []byte `protobuf:"bytes,6,opt,name=node_instance_id,json=nodeInstanceId,proto3" json:"node_instance_id,omitempty"`; NodeEpoch uint64 `protobuf:"varint,7,opt,name=node_epoch,json=nodeEpoch,proto3" json:"node_epoch,omitempty"` }
+type Mutation struct { Address []byte `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`; Slot []byte `protobuf:"bytes,2,opt,name=slot,proto3" json:"slot,omitempty"`; Value []byte `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`; Deleted bool `protobuf:"varint,4,opt,name=deleted,proto3" json:"deleted,omitempty"`; Code []byte `protobuf:"bytes,5,opt,name=code,proto3" json:"code,omitempty"`; AccountAbsent bool `protobuf:"varint,6,opt,name=account_absent,json=accountAbsent,proto3" json:"account_absent,omitempty"`; BlockNumber uint64 `protobuf:"varint,7,opt,name=block_number,json=blockNumber,proto3" json:"block_number,omitempty"`; BlockHash []byte `protobuf:"bytes,8,opt,name=block_hash,json=blockHash,proto3" json:"blockHash,omitempty"` }
+type ResidentEvmDeltaV1 struct { Kind DeltaKind `protobuf:"varint,1,opt,name=kind,proto3" json:"kind,omitempty"`; LogicalSequence uint64 `protobuf:"varint,2,opt,name=logical_sequence,json=logicalSequence,proto3" json:"logical_sequence,omitempty"`; Mutations []*Mutation `protobuf:"bytes,3,rep,name=mutations,proto3" json:"mutations,omitempty"`; WireVersion uint32 `protobuf:"varint,4,opt,name=wire_version,json=wireVersion,proto3" json:"wire_version,omitempty"`; SchemaHash []byte `protobuf:"bytes,5,opt,name=schema_hash,json=schemaHash,proto3" json:"schema_hash,omitempty"`; NodeInstanceID []byte `protobuf:"bytes,6,opt,name=node_instance_id,json=nodeInstanceId,proto3" json:"node_instance_id,omitempty"`; NodeEpoch uint64 `protobuf:"varint,7,opt,name=node_epoch,json=nodeEpoch,proto3" json:"node_epoch,omitempty"`; TransportSequence uint64 `protobuf:"varint,8,opt,name=transport_sequence,json=transportSequence,proto3" json:"transport_sequence,omitempty"`; GapEpoch uint64 `protobuf:"varint,9,opt,name=gap_epoch,json=gapEpoch,proto3" json:"gap_epoch,omitempty"`; SchemaVersion uint32 `protobuf:"varint,10,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`; FeatureBits uint64 `protobuf:"varint,11,opt,name=feature_bits,json=featureBits,proto3" json:"feature_bits,omitempty"` }
 func (*Mutation) Reset() {} ; func (*Mutation) String() string { return "mutation" }; func (*Mutation) ProtoMessage() {}
 func (*ResidentEvmDeltaV1) Reset() {} ; func (*ResidentEvmDeltaV1) String() string { return "resident_evm_delta_v1" }; func (*ResidentEvmDeltaV1) ProtoMessage() {}
 
-func MarshalLogical(m *ResidentEvmDeltaV1) ([]byte, error) {
-	if m == nil || m.Kind == DeltaKindInvalid { return nil, errors.New("invalid delta kind") }
-	for _, x := range m.Mutations { if x == nil || len(x.Address) != 20 || (len(x.Slot) != 0 && len(x.Slot) != 32) || (len(x.Value) != 0 && len(x.Value) != 32) { return nil, errors.New("invalid mutation width") } }
-	var b oldproto.Buffer; b.SetDeterministic(true)
-	if err := b.Marshal(m); err != nil { return nil, err }; return b.Bytes(), nil
+var schemaHash = sha256.Sum256([]byte("rhc-resident-evm-delta-v1"))
+func validate(m *ResidentEvmDeltaV1) error {
+ if m==nil || m.Kind==DeltaKindInvalid || m.Kind>DeltaKindEpochReset{return errors.New("invalid delta kind")}
+ if m.WireVersion!=0 && uint16(m.WireVersion)!=WireVersion || m.SchemaVersion!=0 && uint16(m.SchemaVersion)!=SchemaVersion{return errors.New("unsupported version")}
+ if len(m.NodeInstanceID)!=0 && len(m.NodeInstanceID)!=16{return errors.New("node instance id width")}
+ if len(m.SchemaHash)!=0 && !bytes.Equal(m.SchemaHash,schemaHash[:]){return errors.New("schema hash mismatch")}
+ for _,x:=range m.Mutations {if x==nil||len(x.Address)!=20||(len(x.Slot)!=0&&len(x.Slot)!=32)||(len(x.Value)!=0&&len(x.Value)!=32)||(x.Deleted&&len(x.Value)!=0)||(x.AccountAbsent&&len(x.Slot)!=0){return errors.New("invalid mutation")};if len(x.BlockHash)!=0&&len(x.BlockHash)!=32{return errors.New("block hash width")}}
+ return nil
 }
-func UnmarshalLogical(data []byte, m *ResidentEvmDeltaV1) error {
-	if len(data) == 0 || m == nil { return errors.New("empty logical record") }
-	if err := oldproto.Unmarshal(data, m); err != nil { return err }
-	if m.Kind == DeltaKindInvalid || m.Kind > DeltaKindEpochReset { return errors.New("unknown delta kind") }
-	for _, x := range m.Mutations { if x == nil || len(x.Address) != 20 || (len(x.Slot) != 0 && len(x.Slot) != 32) || (len(x.Value) != 0 && len(x.Value) != 32) { return errors.New("invalid mutation width") } }
-	return nil
-}
+func MarshalLogical(m *ResidentEvmDeltaV1)([]byte,error){if err:=validate(m);err!=nil{return nil,err};var b oldproto.Buffer;b.SetDeterministic(true);if err:=b.Marshal(m);err!=nil{return nil,err};return b.Bytes(),nil}
+func UnmarshalLogical(data []byte,m *ResidentEvmDeltaV1)error{if len(data)==0||m==nil{return errors.New("empty logical record")};if err:=oldproto.Unmarshal(data,m);err!=nil{return err};return validate(m)}
 
 var frameMagic = [8]byte{'R','H','C','E','V','M','0','1'}
 type Frame struct { WireVersion uint16; SchemaVersion uint16; FeatureBits uint32; Flags uint32; LogicalSequence uint64; TransportSequence uint64; ChunkIndex uint32; ChunkCount uint32; GapEpoch uint64; Payload []byte }
