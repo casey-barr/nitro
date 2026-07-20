@@ -302,6 +302,7 @@ type ExecutionEngine struct {
 	disableDelayedSequencingFilter bool
 	postStartStates                *PostStartStateStore
 	residentPostStartStates        *ResidentPostStartStateStore
+	residentPostStartEnabled       bool
 }
 
 func NewL1PriceData() *L1PriceData {
@@ -1274,14 +1275,24 @@ func (s *ExecutionEngine) digestMessageWithBlockMutex(msgIdxToDigest arbutil.Mes
 		}()
 	}
 
-	childNumber := new(big.Int).Add(new(big.Int).Set(currentHeader.Number), big.NewInt(1))
-	arbOSVersion := types.DeserializeHeaderExtraInformation(currentHeader).ArbOSFormatVersion
-	signer := types.MakeSigner(s.bc.Config(), childNumber, currentHeader.Time, arbOSVersion)
-	residentObserver, err := s.residentPostStartStates.Observer(uint64(msgIdxToDigest), crypto.Keccak256Hash(msg.Message.L2msg), signer)
-	if err != nil {
-		return nil, err
+	var residentObserver *residentPostStartObserver
+	if s.residentPostStartEnabled {
+		childNumber := new(big.Int).Add(new(big.Int).Set(currentHeader.Number), big.NewInt(1))
+		arbOSVersion := types.DeserializeHeaderExtraInformation(currentHeader).ArbOSFormatVersion
+		signer := types.MakeSigner(s.bc.Config(), childNumber, currentHeader.Time, arbOSVersion)
+		residentObserver, err = s.residentPostStartStates.Observer(uint64(msgIdxToDigest), crypto.Keccak256Hash(msg.Message.L2msg), signer)
+		if err != nil {
+			return nil, err
+		}
 	}
-	block, statedb, receipts, err := s.createBlockFromNextMessage(msg, false, false, residentObserver)
+	var block *types.Block
+	var statedb *state.StateDB
+	var receipts types.Receipts
+	if residentObserver != nil {
+		block, statedb, receipts, err = s.createBlockFromNextMessage(msg, false, false, residentObserver)
+	} else {
+		block, statedb, receipts, err = s.createBlockFromNextMessage(msg, false, false)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1292,7 +1303,9 @@ func (s *ExecutionEngine) digestMessageWithBlockMutex(msgIdxToDigest arbutil.Mes
 	if err != nil {
 		return nil, err
 	}
-	s.residentPostStartStates.MarkCanonical(block)
+	if residentObserver != nil {
+		s.residentPostStartStates.MarkCanonical(block)
+	}
 	s.cacheL1PriceDataOfMsg(msgIdxToDigest, block, false)
 
 	if time.Now().After(s.nextScheduledVersionCheck) {

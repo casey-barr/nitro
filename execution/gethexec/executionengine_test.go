@@ -58,3 +58,10 @@ func TestSequencerWrapperMutexReleasedOnSuccess(t *testing.T) {
 	}
 	engine.createBlocksMutex.Unlock()
 }
+
+func TestResidentPostStartObserverDisabledByDefault(t *testing.T) {
+	engine := NewExecutionEngine(nil, 0, false, true, nil, nil)
+	if engine.residentPostStartEnabled {
+		t.Fatal("resident post-Start observer must be disabled by default")
+	}
+}
