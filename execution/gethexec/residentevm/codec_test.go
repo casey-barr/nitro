@@ -113,7 +113,7 @@ func TestFrameRejectsTrailingAndDuplicateChunks(t *testing.T) {
 // true CRC32c (Castagnoli). The identical literal is pinned in the Rust
 // consumer's tests (rhc-v2 frame.rs GOLDEN_GAP_FRAME_HEX): a checksum or
 // layout drift on either side fails a unit test instead of killing the socket.
-const goldenGapFrameHex = "52484345564d3031000100010000000001e355302a8dac33f91984f1fadfe957114088e43ec6e6ca9e0f671281d3aeea00000000000000010000000933018efc79bd62706d2677890fefa6acf22fbabac61f450696e2770b8d88b39a22b2247c080110018201020801"
+const goldenGapFrameHex = "52484345564d303100010001000000008c464a1e344c35c0728572a069d890166218e86d8d7e7aa0d330b74bac18280f00000000000000010000000933018efc79bd62706d2677890fefa6acf22fbabac61f450696e2770b8d88b39a7f85fb34080110018201020801"
 
 func TestGoldenFrameBytesArePinnedCrossLanguage(t *testing.T) {
 	golden, err := hex.DecodeString(goldenGapFrameHex)

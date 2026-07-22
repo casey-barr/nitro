@@ -1,6 +1,6 @@
 {
-  "schema": "rhc-resident-evm-delta-v1|oneof-records-v1",
-  "schema_sha256_input": "rhc-resident-evm-delta-v1|oneof-records-v1",
+  "schema": "rhc-resident-evm-delta-v1|oneof-records-v2",
+  "schema_sha256_input": "rhc-resident-evm-delta-v1|oneof-records-v2",
   "records": [
     {"name":"Gap", "payload_hex":"080110018201020801"},
     {"name":"Hello", "payload_hex":"080110015200"},

@@ -64,7 +64,7 @@ func (*ResidentEvmDeltaV1) XXX_OneofWrappers() []interface{} {
 	return []interface{}{(*ResidentEvmDeltaV1_Hello)(nil), (*ResidentEvmDeltaV1_PostStartBlock)(nil), (*ResidentEvmDeltaV1_IncludedTransaction)(nil), (*ResidentEvmDeltaV1_IncludedGroup)(nil), (*ResidentEvmDeltaV1_MessageCommitted)(nil), (*ResidentEvmDeltaV1_BuildAborted)(nil), (*ResidentEvmDeltaV1_Gap)(nil), (*ResidentEvmDeltaV1_Reorg)(nil), (*ResidentEvmDeltaV1_EpochReset)(nil)}
 }
 
-var schemaHash = sha256.Sum256([]byte("rhc-resident-evm-delta-v1|oneof-records-v1"))
+var schemaHash = sha256.Sum256([]byte("rhc-resident-evm-delta-v1|oneof-records-v2"))
 
 func TypedSchemaHash() []byte { return append([]byte(nil), schemaHash[:]...) }
 func validateRecord(m *ResidentEvmDeltaV1) error {

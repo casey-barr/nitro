@@ -52,6 +52,12 @@ type Mutation struct {
 	AccountAbsent bool   `protobuf:"varint,6,opt,name=account_absent,json=accountAbsent,proto3"`
 	BlockNumber   uint64 `protobuf:"varint,7,opt,name=block_number,json=blockNumber,proto3"`
 	BlockHash     []byte `protobuf:"bytes,8,opt,name=block_hash,json=blockHash,proto3"`
+	// Account-update shape (empty slot/code/block_hash, account_absent=false,
+	// non-empty balance and code_hash): final nonce/balance/code_hash for the
+	// address at the boundary; deleted=true is wipe-then-apply.
+	Nonce    uint64 `protobuf:"varint,9,opt,name=nonce,proto3"`
+	Balance  []byte `protobuf:"bytes,10,opt,name=balance,proto3"`
+	CodeHash []byte `protobuf:"bytes,11,opt,name=code_hash,json=codeHash,proto3"`
 }
 
 func (*Mutation) Reset()         {}
