@@ -2,6 +2,7 @@ package gethexec
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 	"sync"
 
@@ -105,6 +106,14 @@ func (s *ResidentPostStartStateStore) MarkCanonical(block *types.Block) {
 	}
 }
 
+// Clear drops every retained record and counts nothing. Called on reorg:
+// records keyed to orphaned blocks must never serve sender snapshots.
+func (s *ResidentPostStartStateStore) Clear() {
+	s.mu.Lock()
+	s.entries = nil
+	s.mu.Unlock()
+}
+
 func (s *ResidentPostStartStateStore) noteFailure() {
 	s.mu.Lock()
 	s.failures++
@@ -182,7 +191,15 @@ func (o *residentPostStartObserver) StartBlockApplied(header *types.Header, stat
 }
 
 func (o *residentPostStartObserver) StartBlockAppliedWithTransactions(header *types.Header, statedb *state.StateDB, _ *types.Transaction, txes types.Transactions, authoritative bool) {
-	if header == nil || statedb == nil || !authoritative {
+	// A resident observer must fail itself, never the chain executor: this
+	// method runs inside block production, so any panic in capture latches an
+	// error instead of unwinding into the state transition.
+	defer func() {
+		if r := recover(); r != nil {
+			o.setError(fmt.Errorf("resident post-start observer panic: %v", r))
+		}
+	}()
+	if header == nil || header.Number == nil || statedb == nil || !authoritative {
 		o.setError(errResidentSenderRead)
 		return
 	}
@@ -191,14 +208,24 @@ func (o *residentPostStartObserver) StartBlockAppliedWithTransactions(header *ty
 		o.setError(err)
 		return
 	}
+	// Snapshot from a COPY: geth state getters latch read errors (missing
+	// trie/code nodes) into the StateDB they run on, and a latched error on
+	// the live instance fails the canonical block at commit. The copy
+	// absorbs any such poison and is discarded.
+	reader := statedb.Copy()
 	snapshots := make([]ResidentSenderSnapshot, 0, len(addresses))
 	for _, address := range addresses {
-		snapshot, err := snapshotSender(statedb, address)
+		snapshot, err := snapshotSender(reader, address)
 		if err != nil {
-		o.setError(err)
+			o.setError(err)
 			return
 		}
 		snapshots = append(snapshots, snapshot)
+	}
+	childNumber := header.Number.Uint64()
+	parentNumber := uint64(0)
+	if childNumber > 0 {
+		parentNumber = childNumber - 1
 	}
 	o.store.mu.Lock()
 	o.store.entries = append(o.store.entries, &residentPostStartEntry{
@@ -208,8 +235,8 @@ func (o *residentPostStartObserver) StartBlockAppliedWithTransactions(header *ty
 			MessageIndex:      o.context.messageIndex,
 			MessageDigest:     o.context.messageDigest,
 			TransactionCount:  uint64(len(txes)),
-			ParentBlockNumber: func() uint64 { if header.Number == nil || header.Number.Sign() == 0 { return 0 }; return header.Number.Uint64() - 1 }(),
-			ChildBlockNumber:  header.Number.Uint64(),
+			ParentBlockNumber: parentNumber,
+			ChildBlockNumber:  childNumber,
 			Senders:           snapshots,
 		},
 	})

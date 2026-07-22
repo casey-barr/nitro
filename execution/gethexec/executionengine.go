@@ -505,6 +505,8 @@ func (s *ExecutionEngine) Reorg(msgIdxOfFirstMsgToAdd arbutil.MessageIndex, newM
 
 	s.createBlocksMutex.Lock()
 	s.postStartStates.Clear()
+	// Records keyed to orphaned blocks must never serve sender snapshots.
+	s.residentPostStartStates.Clear()
 	resequencing := false
 	defer func() {
 		// if we are resequencing old messages - don't release the lock
@@ -1281,7 +1283,13 @@ func (s *ExecutionEngine) digestMessageWithBlockMutex(msgIdxToDigest arbutil.Mes
 		}()
 	}
 
-	residentObserver, residentObserverErr := s.residentObserverForDigest(uint64(msgIdxToDigest), crypto.Keccak256Hash(msg.Message.L2msg), currentHeader)
+	var residentObserver *residentPostStartObserver
+	var residentObserverErr error
+	if s.residentPostStartEnabled {
+		// The message digest is computed only when the resident path is
+		// enabled: disabled must not pay a keccak over the L2 payload.
+		residentObserver, residentObserverErr = s.residentObserverForDigest(uint64(msgIdxToDigest), crypto.Keccak256Hash(msg.Message.L2msg), currentHeader)
+	}
 	if residentObserverErr != nil {
 		// Resident capture must fail itself, never the chain executor: the
 		// message digests without an observer and is retained as a gap.

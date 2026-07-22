@@ -90,3 +90,33 @@ func mustSignedResidentTx(t *testing.T, signer types.Signer, key *ecdsa.PrivateK
 	if err != nil { t.Fatal(err) }
 	return tx
 }
+
+func TestResidentObserverNilHeaderNumberLatchesInsteadOfPanicking(t *testing.T) {
+	store := NewResidentPostStartStateStore()
+	observer, err := store.Observer(3, common.HexToHash("0x3"), types.LatestSigner(params.AllEthashProtocolChanges))
+	if err != nil { t.Fatal(err) }
+	// A header with a nil Number previously reached an unconditional
+	// header.Number.Uint64() dereference — a panic inside block production.
+	observer.StartBlockAppliedWithTransactions(&types.Header{Number: nil}, nil, nil, nil, true)
+	if observer.Error() == nil { t.Fatal("nil header number was accepted") }
+	if _, ok := store.LatestCanonical(); ok { t.Fatal("failed observer retained a record") }
+}
+
+func TestResidentStoreClearDropsRecordsOnReorg(t *testing.T) {
+	keyA, err := crypto.GenerateKey()
+	if err != nil { t.Fatal(err) }
+	signer := types.LatestSigner(params.AllEthashProtocolChanges)
+	txA := mustSignedResidentTx(t, signer, keyA, 0)
+	db, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	if err != nil { t.Fatal(err) }
+	store := NewResidentPostStartStateStore()
+	observer, err := store.Observer(21, common.HexToHash("0x21"), signer)
+	if err != nil { t.Fatal(err) }
+	header := &types.Header{Number: big.NewInt(5), ParentHash: common.HexToHash("0x55")}
+	observer.StartBlockAppliedWithTransactions(header, db, nil, types.Transactions{txA}, true)
+	if observer.Error() != nil { t.Fatal(observer.Error()) }
+	store.MarkCanonical(types.NewBlock(header, &types.Body{}, nil, trie.NewStackTrie(nil)))
+	if _, ok := store.LatestCanonical(); !ok { t.Fatal("canonical record missing before reorg") }
+	store.Clear()
+	if _, ok := store.LatestCanonical(); ok { t.Fatal("orphaned record survived reorg clear") }
+}
