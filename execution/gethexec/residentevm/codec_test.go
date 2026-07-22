@@ -110,9 +110,7 @@ func TestGoldenFrameBytesArePinnedCrossLanguage(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(built, golden) {
-		t.Fatalf("encoder diverges from the golden frame:
- got %x
-want %x", built, golden)
+		t.Fatalf("encoder diverges from the golden frame: got %x want %x", built, golden)
 	}
 	decoded, err := DecodeFrame(golden)
 	if err != nil || !bytes.Equal(decoded.Payload, payload) {
