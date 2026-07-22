@@ -28,6 +28,13 @@ import (
 //   - The drain's deterministic order (address, then kind Account < Storage <
 //     Code) is preserved: an account wipe lands before the slots and code
 //     that follow it.
+//
+// Scope contract: the consumer's sparse mirror applies storage mutations only
+// to accounts it already tracks (MissingAccount otherwise) and resolves an
+// account-update's code_hash against code it has seen. Deltas are therefore
+// only applicable over a bootstrapped account set — the exporter's handshake
+// (full snapshot) owns that guarantee, along with envelope sequence numbers
+// and node identity, which this layer deliberately leaves zero.
 
 var (
 	errResidentProducerBalanceWidth = errors.New("resident producer: balance exceeds 32 bytes")
@@ -38,7 +45,7 @@ var (
 // residentDelta stamps the envelope fields the conversion layer owns (schema
 // identity and versions). Sequence numbers and node identity stay zero here;
 // the exporter assigns them at emission time.
-func residentDelta(record interface{}) *residentevm.ResidentEvmDeltaV1 {
+func residentDelta(record interface{}) (*residentevm.ResidentEvmDeltaV1, error) {
 	delta := &residentevm.ResidentEvmDeltaV1{
 		WireVersion:   uint32(residentevm.WireVersion),
 		SchemaVersion: uint32(residentevm.SchemaVersion),
@@ -49,8 +56,10 @@ func residentDelta(record interface{}) *residentevm.ResidentEvmDeltaV1 {
 		delta.Record = &residentevm.ResidentEvmDeltaV1_PostStartBlock{PostStartBlock: typed}
 	case *residentevm.MessageCommitted:
 		delta.Record = &residentevm.ResidentEvmDeltaV1_MessageCommitted{MessageCommitted: typed}
+	default:
+		return nil, fmt.Errorf("resident producer: unsupported record type %T", record)
 	}
-	return delta
+	return delta, nil
 }
 
 // PostStartRecordToDelta converts one retained observer record into the wire
@@ -83,7 +92,7 @@ func PostStartRecordToDelta(record ResidentPostStartRecord) (*residentevm.Reside
 		ChildBlock:    record.ChildBlockNumber,
 		MessageDigest: record.MessageDigest.Bytes(),
 		Sender:        senders,
-	}), nil
+	})
 }
 
 // DrainedWritesToCommitted converts one boundary's coalesced drained writes
@@ -96,13 +105,16 @@ func DrainedWritesToCommitted(messageHash, blockHash [32]byte, writes []state.Re
 		if err != nil {
 			return nil, err
 		}
+		if mutation == nil {
+			continue
+		}
 		mutations = append(mutations, mutation)
 	}
 	return residentDelta(&residentevm.MessageCommitted{
 		MessageHash: messageHash[:],
 		BlockHash:   blockHash[:],
 		Mutations:   mutations,
-	}), nil
+	})
 }
 
 func drainedWriteToMutation(write state.ResidentMutation) (*residentevm.Mutation, error) {
@@ -146,6 +158,15 @@ func drainedWriteToMutation(write state.ResidentMutation) (*residentevm.Mutation
 		}
 		return mutation, nil
 	case state.ResidentMutationCode:
+		if len(write.Value.Code) == 0 {
+			// An EIP-7702 delegation clear (SetCode(authority, nil)) drains an
+			// empty-code record. The consumer's code shape requires non-empty
+			// bytes and would refuse the whole message; the paired account
+			// mutation already carries code_hash = KECCAK_EMPTY, which clears
+			// the delegation on the consumer, so the empty-code record is
+			// redundant and is skipped rather than emitted.
+			return nil, nil
+		}
 		return &residentevm.Mutation{
 			Address: write.Key.Address.Bytes(),
 			Code:    append([]byte(nil), write.Value.Code...),

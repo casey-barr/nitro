@@ -143,3 +143,84 @@ func TestProducerSenderConversionAndWidthRefusals(t *testing.T) {
 		t.Fatal("nil balance accepted")
 	}
 }
+
+func TestProducerSkipsEmptyCodeDelegationClear(t *testing.T) {
+	addr := common.HexToAddress("0x7000")
+	// EIP-7702 delegation clear: SetCode(authority, nil) drains an empty-code
+	// record; emitting it would make the consumer refuse the whole message.
+	writes := []state.ResidentMutation{
+		{
+			Key: state.ResidentMutationKey{Address: addr, Kind: state.ResidentMutationAccount},
+			Value: state.ResidentMutationValue{
+				Nonce:    1,
+				Balance:  uint256.NewInt(5),
+				CodeHash: crypto.Keccak256Hash(nil),
+			},
+		},
+		{
+			Key:   state.ResidentMutationKey{Address: addr, Kind: state.ResidentMutationCode},
+			Value: state.ResidentMutationValue{Code: nil, CodeHash: crypto.Keccak256Hash(nil)},
+		},
+	}
+	delta, err := DrainedWritesToCommitted([32]byte{1}, [32]byte{2}, writes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed := delta.Record.(*residentevm.ResidentEvmDeltaV1_MessageCommitted).MessageCommitted
+	if len(committed.Mutations) != 1 {
+		t.Fatalf("empty-code record must be skipped, got %d mutations", len(committed.Mutations))
+	}
+	if len(committed.Mutations[0].CodeHash) != 32 {
+		t.Fatal("the paired account mutation must carry the cleared code hash")
+	}
+}
+
+func TestProducerEmptyDrainAndEmptySenders(t *testing.T) {
+	delta, err := DrainedWritesToCommitted([32]byte{1}, [32]byte{2}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed := delta.Record.(*residentevm.ResidentEvmDeltaV1_MessageCommitted).MessageCommitted
+	if len(committed.Mutations) != 0 || len(committed.MessageHash) != 32 {
+		t.Fatalf("empty drain shape wrong: %+v", committed)
+	}
+	post, err := PostStartRecordToDelta(ResidentPostStartRecord{
+		MessageDigest:     common.HexToHash("0x1"),
+		ParentBlockNumber: 4,
+		ChildBlockNumber:  5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := post.Record.(*residentevm.ResidentEvmDeltaV1_PostStartBlock).PostStartBlock
+	if len(record.Sender) != 0 || record.ChildBlock != 5 {
+		t.Fatalf("empty senders shape wrong: %+v", record)
+	}
+}
+
+func TestProducerCodeBearingSender(t *testing.T) {
+	// A 7702-delegated sender carries code; the wire Sender must carry both
+	// the code bytes and the matching hash.
+	code := []byte{0xef, 0x01, 0x00}
+	record := ResidentPostStartRecord{
+		MessageDigest:     common.HexToHash("0x2"),
+		ParentBlockNumber: 7,
+		ChildBlockNumber:  8,
+		Senders: []ResidentSenderSnapshot{{
+			Address:  common.HexToAddress("0x8000"),
+			Nonce:    2,
+			Balance:  big.NewInt(9),
+			CodeHash: crypto.Keccak256Hash(code),
+			Code:     code,
+			Exists:   true,
+		}},
+	}
+	delta, err := PostStartRecordToDelta(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := delta.Record.(*residentevm.ResidentEvmDeltaV1_PostStartBlock).PostStartBlock.Sender[0]
+	if !bytes.Equal(sender.Code, code) || !bytes.Equal(sender.CodeHash, crypto.Keccak256Hash(code).Bytes()) {
+		t.Fatalf("code-bearing sender wrong: %+v", sender)
+	}
+}
