@@ -7,6 +7,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/common"
+
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
@@ -57,4 +59,15 @@ func TestSequencerWrapperMutexReleasedOnSuccess(t *testing.T) {
 		t.Fatal("createBlocksMutex is still locked after normal return")
 	}
 	engine.createBlocksMutex.Unlock()
+}
+
+func TestResidentPostStartObserverDisabledByDefault(t *testing.T) {
+	engine := NewExecutionEngine(nil, 0, false, true, nil, nil)
+	if engine.residentPostStartEnabled {
+		t.Fatal("resident post-Start observer must be disabled by default")
+	}
+	observer, err := engine.residentObserverForDigest(1, common.Hash{}, nil)
+	if err != nil || observer != nil {
+		t.Fatalf("disabled gate touched observer path: observer=%v err=%v", observer, err)
+	}
 }

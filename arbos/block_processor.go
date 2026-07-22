@@ -253,8 +253,18 @@ type SequencingHooks interface {
 // StartBlockObserver receives the exact ephemeral state immediately after the
 // synthetic StartBlock transaction commits and before any user transaction.
 // Observers must not mutate the supplied StateDB.
+type ParsedTransactionList struct {
+	Transactions   types.Transactions
+	Authoritative  bool
+}
+
 type StartBlockObserver interface {
 	StartBlockApplied(*types.Header, *state.StateDB, *types.Transaction)
+}
+
+// StartBlockObserverWithTransactions is an additive extension for the resident mirror.
+type StartBlockObserverWithTransactions interface {
+	StartBlockAppliedWithTransactions(*types.Header, *state.StateDB, *types.Transaction, types.Transactions, bool)
 }
 
 func observeStartBlock(
@@ -263,6 +273,8 @@ func observeStartBlock(
 	statedb *state.StateDB,
 	tx *types.Transaction,
 	completedTransactions int,
+	orderedTransactions types.Transactions,
+	orderedTransactionsAuthoritative bool,
 ) {
 	if observer == nil || completedTransactions != 0 || tx.Type() != types.ArbitrumInternalTxType {
 		return
@@ -274,6 +286,10 @@ func observeStartBlock(
 	var selector [4]byte
 	copy(selector[:], internal.Data[:4])
 	if selector != InternalTxStartBlockMethodID {
+		return
+	}
+	if rich, ok := observer.(StartBlockObserverWithTransactions); ok {
+		rich.StartBlockAppliedWithTransactions(header, statedb, tx, orderedTransactions, orderedTransactionsAuthoritative)
 		return
 	}
 	observer.StartBlockApplied(header, statedb, tx)
@@ -334,6 +350,7 @@ func ProduceBlock(
 	chainConfig := chainContext.Config()
 	lastArbosVersion := types.DeserializeHeaderExtraInformation(lastBlockHeader).ArbOSFormatVersion
 	txes, err := ParseL2Transactions(message, chainConfig.ChainID, lastArbosVersion)
+	parsedAuthoritative := err == nil
 	if err != nil {
 		log.Warn("error parsing incoming message", "err", err)
 		txes = types.Transactions{}
@@ -341,7 +358,7 @@ func ProduceBlock(
 	hooks := NewNoopSequencingHooks(txes)
 
 	return ProduceBlockAdvanced(
-		message.Header, delayedMessagesRead, lastBlockHeader, statedb, chainContext, hooks, isMsgForPrefetch, runCtx, exposeMultiGas, nil, startBlockObserver,
+		message.Header, delayedMessagesRead, lastBlockHeader, statedb, chainContext, hooks, isMsgForPrefetch, runCtx, exposeMultiGas, nil, startBlockObserver, ParsedTransactionList{Transactions: txes, Authoritative: parsedAuthoritative},
 	)
 }
 
@@ -358,6 +375,7 @@ func ProduceBlockAdvanced(
 	exposeMultiGas bool,
 	addressChecker state.AddressChecker,
 	startBlockObserver StartBlockObserver,
+	orderedTransactions ...ParsedTransactionList,
 ) (*types.Block, *state.StateDB, types.Receipts, error) {
 
 	arbState, err := arbosState.OpenSystemArbosState(statedb, nil, false)
@@ -641,7 +659,13 @@ func ProduceBlockAdvanced(
 			return nil, nil, nil, fmt.Errorf("failed to apply internal transaction: %w", result.Err)
 		}
 
-		observeStartBlock(startBlockObserver, header, buildState.statedb, tx, len(buildState.complete))
+		parsedTransactions := types.Transactions(nil)
+		parsedAuthoritative := false
+		if len(orderedTransactions) > 0 {
+			parsedTransactions = orderedTransactions[0].Transactions
+			parsedAuthoritative = orderedTransactions[0].Authoritative
+		}
+		observeStartBlock(startBlockObserver, header, buildState.statedb, tx, len(buildState.complete), parsedTransactions, parsedAuthoritative)
 
 		if preTxHeaderGasUsed > header.GasUsed {
 			return nil, nil, nil, fmt.Errorf("ApplyTransaction() used -%v gas", preTxHeaderGasUsed-header.GasUsed)

@@ -1,0 +1,15 @@
+syntax = "proto3";
+package residentevm;
+option go_package = "github.com/OffchainLabs/nitro/execution/gethexec/residentevm";
+message ResidentEvmDeltaV1 { uint32 wire_version=1; uint32 schema_version=2; uint64 logical_sequence=3; uint64 transport_sequence=4; uint64 gap_epoch=5; bytes schema_hash=6; bytes node_instance_id=7; uint64 node_epoch=8; uint64 feature_bits=9; oneof record { Hello hello=10; PostStartBlockWithSenders post_start_block=11; IncludedTransaction included_transaction=12; IncludedGroup included_group=13; MessageCommitted message_committed=14; BuildAborted build_aborted=15; Gap gap=16; Reorg reorg=17; EpochReset epoch_reset=18; } }
+message Mutation { bytes address=1; bytes slot=2; bytes value=3; bool deleted=4; bytes code=5; bool account_absent=6; uint64 block_number=7; bytes block_hash=8; }
+message Hello { bytes schema_hash=1; uint32 schema_version=2; uint64 feature_bits=3; bytes node_instance_id=4; uint64 node_epoch=5; }
+message PostStartBlockWithSenders { uint64 parent_block=1; uint64 child_block=2; bytes message_digest=3; repeated Sender sender=4; }
+message Sender { bytes address=1; uint64 nonce=2; bytes balance=3; bytes code_hash=4; bytes code=5; bool exists=6; }
+message IncludedTransaction { bytes tx_hash=1; uint32 status=2; uint64 gas_used=3; repeated Mutation mutations=4; }
+message IncludedGroup { bytes group_hash=1; repeated IncludedTransaction transactions=2; repeated Mutation mutations=3; }
+message MessageCommitted { bytes message_hash=1; bytes block_hash=2; repeated Mutation mutations=3; }
+message BuildAborted { string reason=1; uint64 gap_epoch=2; }
+message Gap { uint64 gap_epoch=1; uint64 first_lost_sequence=2; }
+message Reorg { bytes old_head=1; bytes new_head=2; uint64 common_block=3; }
+message EpochReset { uint64 node_epoch=1; bytes node_instance_id=2; }
