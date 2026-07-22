@@ -159,9 +159,21 @@ type combinedStartBlockObserver struct {
 	resident *residentPostStartObserver
 }
 
+// callRetained shields block production from the retained observer too: its
+// capture path (statedb.Copy, header derefs) runs inside ProduceBlock and has
+// no recover of its own. An observer must fail itself, never the executor.
+func callRetained(retained arbos.StartBlockObserver, header *types.Header, statedb *state.StateDB, tx *types.Transaction) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Warn("retained post-start observer panicked; block construction unaffected", "panic", r)
+		}
+	}()
+	retained.StartBlockApplied(header, statedb, tx)
+}
+
 func (o *combinedStartBlockObserver) StartBlockApplied(header *types.Header, statedb *state.StateDB, tx *types.Transaction) {
 	if o.retained != nil {
-		o.retained.StartBlockApplied(header, statedb, tx)
+		callRetained(o.retained, header, statedb, tx)
 	}
 	if o.resident != nil {
 		o.resident.StartBlockApplied(header, statedb, tx)
@@ -170,7 +182,7 @@ func (o *combinedStartBlockObserver) StartBlockApplied(header *types.Header, sta
 
 func (o *combinedStartBlockObserver) StartBlockAppliedWithTransactions(header *types.Header, statedb *state.StateDB, tx *types.Transaction, txes types.Transactions, authoritative bool) {
 	if o.retained != nil {
-		o.retained.StartBlockApplied(header, statedb, tx)
+		callRetained(o.retained, header, statedb, tx)
 	}
 	if o.resident != nil {
 		o.resident.StartBlockAppliedWithTransactions(header, statedb, tx, txes, authoritative)
@@ -227,8 +239,12 @@ func (o *residentPostStartObserver) StartBlockAppliedWithTransactions(header *ty
 	if childNumber > 0 {
 		parentNumber = childNumber - 1
 	}
-	o.store.mu.Lock()
-	o.store.entries = append(o.store.entries, &residentPostStartEntry{
+	// Build the entry COMPLETELY before taking the lock, and unlock via defer:
+	// a panic inside a bare Lock/Unlock window would be swallowed by this
+	// method's recover with the mutex still held, deadlocking MarkCanonical/
+	// Clear/LatestCanonical on the block-production path — a hang introduced
+	// by the very isolation that was meant to prevent one.
+	entry := &residentPostStartEntry{
 		parentHash: header.ParentHash,
 		childHash:  header.Hash(),
 		record: ResidentPostStartRecord{
@@ -239,8 +255,12 @@ func (o *residentPostStartObserver) StartBlockAppliedWithTransactions(header *ty
 			ChildBlockNumber:  childNumber,
 			Senders:           snapshots,
 		},
-	})
-	o.store.mu.Unlock()
+	}
+	func() {
+		o.store.mu.Lock()
+		defer o.store.mu.Unlock()
+		o.store.entries = append(o.store.entries, entry)
+	}()
 }
 
 func (o *residentPostStartObserver) setError(err error) {

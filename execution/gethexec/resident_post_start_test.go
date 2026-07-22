@@ -95,9 +95,15 @@ func TestResidentObserverNilHeaderNumberLatchesInsteadOfPanicking(t *testing.T) 
 	store := NewResidentPostStartStateStore()
 	observer, err := store.Observer(3, common.HexToHash("0x3"), types.LatestSigner(params.AllEthashProtocolChanges))
 	if err != nil { t.Fatal(err) }
-	// A header with a nil Number previously reached an unconditional
-	// header.Number.Uint64() dereference — a panic inside block production.
-	observer.StartBlockAppliedWithTransactions(&types.Header{Number: nil}, nil, nil, nil, true)
+	// Regression for the pre-fix panic: a REAL statedb and an authoritative
+	// prefix, so the only failure is the nil header.Number itself — the
+	// pre-fix code passed the header/statedb guard and reached the
+	// unconditional header.Number.Uint64() dereference inside block
+	// production. (The earlier version of this test passed a nil statedb,
+	// which short-circuited before the deref even pre-fix — vacuous.)
+	db, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	if err != nil { t.Fatal(err) }
+	observer.StartBlockAppliedWithTransactions(&types.Header{Number: nil}, db, nil, types.Transactions{}, true)
 	if observer.Error() == nil { t.Fatal("nil header number was accepted") }
 	if _, ok := store.LatestCanonical(); ok { t.Fatal("failed observer retained a record") }
 }
