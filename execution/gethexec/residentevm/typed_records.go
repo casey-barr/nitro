@@ -20,4 +20,18 @@ var schemaHash=sha256.Sum256([]byte("rhc-resident-evm-delta-v1|oneof-records-v1"
 func TypedSchemaHash()[]byte{return append([]byte(nil),schemaHash[:]...)}
 func validateRecord(m *ResidentEvmDeltaV1)error{if m==nil||m.Record==nil{return errors.New("missing record")};if m.WireVersion!=0&&m.WireVersion!=uint32(WireVersion)||m.SchemaVersion!=0&&m.SchemaVersion!=uint32(SchemaVersion){return errors.New("unsupported version")};if len(m.SchemaHash)!=0&&!bytes.Equal(m.SchemaHash,schemaHash[:]){return errors.New("schema hash mismatch")};if len(m.NodeInstanceID)!=0&&len(m.NodeInstanceID)!=16{return errors.New("node instance id width")};return nil}
 func MarshalLogical(m *ResidentEvmDeltaV1)([]byte,error){if err:=validateRecord(m);err!=nil{return nil,err};b:=oldproto.NewBuffer(nil);b.SetDeterministic(true);if err:=b.Marshal(m);err!=nil{return nil,err};return b.Bytes(),nil}
-func UnmarshalLogical(data []byte,m *ResidentEvmDeltaV1)error{if len(data)==0||m==nil{return errors.New("empty logical record")};if err:=oldproto.Unmarshal(data,m);err!=nil{return err};return validateRecord(m)}
+// UnmarshalLogical decodes one logical record into m. m is zeroed first:
+// golang/protobuf's Unmarshal contract is reset-then-merge and these hand
+// generated types carry no-op Reset() methods, so without the explicit zero a
+// reused struct would silently MERGE stale non-zero fields (sequence numbers,
+// schema hash, the previous oneof record) under proto3 zero-omission.
+func UnmarshalLogical(data []byte, m *ResidentEvmDeltaV1) error {
+	if len(data) == 0 || m == nil {
+		return errors.New("empty logical record")
+	}
+	*m = ResidentEvmDeltaV1{}
+	if err := oldproto.Unmarshal(data, m); err != nil {
+		return err
+	}
+	return validateRecord(m)
+}

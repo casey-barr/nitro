@@ -53,6 +53,12 @@ func validateFrameMeta(f Frame, payloadLen int) error {
 	if f.SchemaHash != schemaHash {
 		return errors.New("unsupported schema hash")
 	}
+	if f.FeatureBits != 0 {
+		// The Rust consumer pins feature_bits to the expected tuple (0) and
+		// rejects anything else as TupleMismatch; accepting nonzero here
+		// would let a producer emit frames the consumer refuses.
+		return errors.New("unsupported feature bits")
+	}
 	if f.ChunkCount == 0 || f.ChunkCount > MaxChunkCount || f.ChunkIndex >= f.ChunkCount {
 		return errors.New("invalid frame bounds")
 	}
@@ -163,6 +169,12 @@ func EncodeFrames(payload []byte) ([][]byte, error) {
 	return frames, nil
 }
 
+// ReassembleFrames joins the chunk set of EXACTLY ONE logical record. The
+// frame header carries no logical-record identity (per-chunk digests only, by
+// contract with the Rust consumer), so chunks from two different records with
+// identical protocol tuple, the same count, and disjoint indices would splice
+// undetected: the caller owns the one-record-per-call precondition, exactly as
+// the Rust FrameDecoder owns its sequential single-stream assumption.
 func ReassembleFrames(frames [][]byte) ([]byte, error) {
 	if len(frames) == 0 || len(frames) > int(MaxChunkCount) {
 		return nil, errors.New("invalid frame set")
