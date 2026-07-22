@@ -6,9 +6,10 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/offchainlabs/nitro/arbos"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/offchainlabs/nitro/arbos"
 )
 
 var (
@@ -61,6 +62,11 @@ type residentPostStartEntry struct {
 type ResidentPostStartStateStore struct {
 	mu      sync.RWMutex
 	entries []*residentPostStartEntry
+	// failures counts messages whose observer latched an error and therefore
+	// retained no record. The export layer sees those messages as gaps; the
+	// counter makes the discontinuity observable without ever influencing
+	// block construction.
+	failures uint64
 }
 
 func NewResidentPostStartStateStore() *ResidentPostStartStateStore {
@@ -96,6 +102,35 @@ func (s *ResidentPostStartStateStore) MarkCanonical(block *types.Block) {
 	// retain the most recent bounded window until the consumer is wired.
 	if len(s.entries) > 16 {
 		s.entries = append([]*residentPostStartEntry(nil), s.entries[len(s.entries)-16:]...)
+	}
+}
+
+func (s *ResidentPostStartStateStore) noteFailure() {
+	s.mu.Lock()
+	s.failures++
+	s.mu.Unlock()
+}
+
+// FailureCount reports how many messages latched an observer error and were
+// therefore retained as gaps rather than records.
+func (s *ResidentPostStartStateStore) FailureCount() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.failures
+}
+
+// noteResidentObserverFailure logs and counts a latched resident observer
+// failure without ever propagating it into block construction: a resident
+// authority observer must fail itself, never the chain executor
+// (docs/revm-ship-readiness-assessment-2026-07-21.md). The failed message
+// simply retains no record, so the export layer sees a gap for it.
+func noteResidentObserverFailure(observers []*residentPostStartObserver) {
+	if len(observers) == 0 || observers[0] == nil {
+		return
+	}
+	if err := observers[0].Error(); err != nil {
+		observers[0].store.noteFailure()
+		log.Warn("resident post-start observer failed; block construction unaffected", "err", err)
 	}
 }
 

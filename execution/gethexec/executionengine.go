@@ -1061,11 +1061,7 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 				DelayedMsgIdx: msg.DelayedMessagesRead - 1,
 			}
 		}
-		if len(residentObservers) > 0 && residentObservers[0] != nil {
-			if residentErr := residentObservers[0].Error(); residentErr != nil {
-				return nil, nil, nil, residentErr
-			}
-		}
+		noteResidentObserverFailure(residentObservers)
 		return block, statedb, receipts, nil
 	}
 
@@ -1080,8 +1076,8 @@ func (s *ExecutionEngine) createBlockFromNextMessage(msg *arbostypes.MessageWith
 		s.exposeMultiGas,
 		postStartObserver,
 	)
-	if err == nil && len(residentObservers) > 0 && residentObservers[0] != nil {
-		err = residentObservers[0].Error()
+	if err == nil {
+		noteResidentObserverFailure(residentObservers)
 	}
 	return block, statedb, receipts, err
 }
@@ -1285,9 +1281,13 @@ func (s *ExecutionEngine) digestMessageWithBlockMutex(msgIdxToDigest arbutil.Mes
 		}()
 	}
 
-	residentObserver, err := s.residentObserverForDigest(uint64(msgIdxToDigest), crypto.Keccak256Hash(msg.Message.L2msg), currentHeader)
-	if err != nil {
-		return nil, err
+	residentObserver, residentObserverErr := s.residentObserverForDigest(uint64(msgIdxToDigest), crypto.Keccak256Hash(msg.Message.L2msg), currentHeader)
+	if residentObserverErr != nil {
+		// Resident capture must fail itself, never the chain executor: the
+		// message digests without an observer and is retained as a gap.
+		s.residentPostStartStates.noteFailure()
+		log.Warn("resident post-start observer unavailable; continuing without capture", "err", residentObserverErr)
+		residentObserver = nil
 	}
 	var block *types.Block
 	var statedb *state.StateDB

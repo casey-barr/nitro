@@ -57,6 +57,27 @@ func TestResidentPostStartObserverFailsClosedOnMissingTransactionPrefix(t *testi
 	if _, ok := store.LatestCanonical(); ok { t.Fatal("failed observer retained a record") }
 }
 
+func TestResidentObserverFailureIsCountedAndNeverPropagated(t *testing.T) {
+	store := NewResidentPostStartStateStore()
+	observer, err := store.Observer(1, common.HexToHash("0x1"), types.LatestSigner(params.AllEthashProtocolChanges))
+	if err != nil { t.Fatal(err) }
+	// Non-authoritative prefix latches the observer's own error.
+	observer.StartBlockAppliedWithTransactions(&types.Header{Number: big.NewInt(1)}, nil, nil, nil, false)
+	if observer.Error() == nil { t.Fatal("non-authoritative prefix was accepted") }
+	// The engine-side helper counts the gap; it has no error return, so a
+	// latched observer failure structurally cannot fail block construction.
+	noteResidentObserverFailure([]*residentPostStartObserver{observer})
+	if got := store.FailureCount(); got != 1 { t.Fatalf("failure not counted: %d", got) }
+	if _, ok := store.LatestCanonical(); ok { t.Fatal("failed observer retained a record") }
+	// A healthy or absent observer counts nothing.
+	noteResidentObserverFailure(nil)
+	noteResidentObserverFailure([]*residentPostStartObserver{nil})
+	healthy, err := store.Observer(2, common.HexToHash("0x2"), types.LatestSigner(params.AllEthashProtocolChanges))
+	if err != nil { t.Fatal(err) }
+	noteResidentObserverFailure([]*residentPostStartObserver{healthy})
+	if got := store.FailureCount(); got != 1 { t.Fatalf("spurious failure count: %d", got) }
+}
+
 func TestResidentPostStartObserverRejectsIncompleteIdentity(t *testing.T) {
 	store := NewResidentPostStartStateStore()
 	if _, err := store.Observer(1, common.Hash{}, types.LatestSigner(params.AllEthashProtocolChanges)); err == nil { t.Fatal("zero message digest accepted") }
