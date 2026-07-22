@@ -1,4 +1,5 @@
 package residentevm
+
 import (
 	"bytes"
 	"crypto/sha256"
@@ -9,7 +10,22 @@ import (
 	"os"
 	"testing"
 )
-func TestLogicalRoundTripDeterministic(t *testing.T){in:=&ResidentEvmDeltaV1{WireVersion:1,SchemaVersion:1,LogicalSequence:7,Record:&ResidentEvmDeltaV1_MessageCommitted{MessageCommitted:&MessageCommitted{MessageHash:bytes.Repeat([]byte{7},32),Mutations:[]*Mutation{{Address:bytes.Repeat([]byte{1},20),Slot:bytes.Repeat([]byte{2},32),Value:bytes.Repeat([]byte{3},32)}}}}};b,err:=MarshalLogical(in);if err!=nil{t.Fatal(err)};var out ResidentEvmDeltaV1;if err=UnmarshalLogical(b,&out);err!=nil{t.Fatal(err)};got,err:=MarshalLogical(&out);if err!=nil||!bytes.Equal(got,b){t.Fatalf("not deterministic: %v",err)}}
+
+func TestLogicalRoundTripDeterministic(t *testing.T) {
+	in := &ResidentEvmDeltaV1{WireVersion: 1, SchemaVersion: 1, LogicalSequence: 7, Record: &ResidentEvmDeltaV1_MessageCommitted{MessageCommitted: &MessageCommitted{MessageHash: bytes.Repeat([]byte{7}, 32), Mutations: []*Mutation{{Address: bytes.Repeat([]byte{1}, 20), Slot: bytes.Repeat([]byte{2}, 32), Value: bytes.Repeat([]byte{3}, 32)}}}}}
+	b, err := MarshalLogical(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out ResidentEvmDeltaV1
+	if err = UnmarshalLogical(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	got, err := MarshalLogical(&out)
+	if err != nil || !bytes.Equal(got, b) {
+		t.Fatalf("not deterministic: %v", err)
+	}
+}
 func TestFrameRoundTripAndChecksum(t *testing.T) {
 	payload, _ := MarshalLogical(&ResidentEvmDeltaV1{WireVersion: 1, SchemaVersion: 1, Record: &ResidentEvmDeltaV1_Gap{Gap: &Gap{GapEpoch: 1}}})
 	f, err := EncodeFrame(Frame{WireVersion: 1, SchemaVersion: 1, SchemaHash: schemaHash, ChunkCount: 1, Payload: payload})
